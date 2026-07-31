@@ -24,14 +24,21 @@ import subprocess
 import sys
 from pathlib import Path
 
-EXPECTED_TOOLS = [
+# Sorted, and the count comes from this list rather than the message: hard-coding "six"
+# is how this went stale, blocking a release over a wheel that was fine.
+EXPECTED_TOOLS = sorted([
     "add_to_cart",
     "auth_status",
+    "cancel_login",
     "clear_cart",
     "get_cart",
+    "login_status",
     "remove_from_cart",
+    "search_products",
+    "search_stores",
+    "start_login",
     "update_cart_item",
-]
+])
 
 wheel_dir = Path(sys.argv[1] if len(sys.argv) > 1 else "dist")
 wheels = sorted(wheel_dir.glob("*.whl"))
@@ -106,7 +113,11 @@ listed = responses.get(2)
 check("answered tools/list", listed is not None)
 if listed:
     names = sorted(t["name"] for t in listed.get("result", {}).get("tools", []))
-    check(f"exposes all six tools ({len(names)})", names == EXPECTED_TOOLS, f"got {names}")
+    check(
+        f"exposes all {len(EXPECTED_TOOLS)} tools (got {len(names)})",
+        names == EXPECTED_TOOLS,
+        f"got {names}",
+    )
 
 # A stdio server ends when stdin closes; a non-zero exit would mean it crashed.
 check("exited cleanly", proc.returncode == 0, f"returncode {proc.returncode}")
