@@ -55,6 +55,11 @@ jobs:
           file: coverage.xml
           language: Rust
           label: code-coverage/cargo-llvm-cov
+          # The upload 404s until the repository has GitHub's code-coverage feature
+          # enabled, and a reporting side-channel being unavailable is not a reason to
+          # fail a run whose tests and coverage both passed. The `just coverage` step
+          # above still enforces the floor, so a real regression is caught either way.
+          fail-on-error: false
 
   # Chrome discovery, the UA platform token, profile locations and signal handling all
   # branch per OS. This is the only thing that can actually catch a platform-specific

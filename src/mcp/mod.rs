@@ -40,12 +40,10 @@ pub async fn serve() -> Result<()> {
     // MCP clients shut a stdio server down by signalling it, so SIGTERM is the
     // *normal* exit path here, not an edge case -- and taking it by default would
     // skip the close below, losing the cookie flush that `login` exists to produce.
-    let mut signalled = false;
     let outcome = tokio::select! {
         result = serving => result,
         signal = terminate.recv() => {
             eprintln!("k-ruoka-mcp: {signal}, shutting the browser down cleanly");
-            signalled = true;
             Ok(())
         }
     };
@@ -55,19 +53,24 @@ pub async fn serve() -> Result<()> {
     // whole reason for handling the signal, so it must finish before we go.
     session.close().await.ok();
 
-    if signalled {
-        // Returning here would hang. `tokio::io::stdin` reads on a blocking thread,
-        // and on the signal path stdin is still open, so that read never returns and
-        // runtime shutdown waits on it forever. (The ordinary path does not hit this:
-        // stdin closing is what ended the session, so the read has already returned.)
-        //
-        // Exiting explicitly is safe precisely because the one thing that must be
-        // flushed -- the browser profile -- was just closed and awaited above.
-        // `outcome` is unconditionally `Ok` here: it can only have come from the
-        // signal arm, which is what set this flag.
-        std::process::exit(0);
+    // Both paths exit explicitly rather than returning. Returning hands control back to
+    // the runtime, which waits on tokio's blocking stdin reader -- and that read does not
+    // reliably return even once the client has closed stdin. On the signal path stdin is
+    // still open, so it never returns at all; on Windows it does not return on the
+    // ordinary path either, which left `serve` running forever after its client
+    // disconnected (caught by `closing_stdin_ends_the_session_cleanly` on windows-latest,
+    // where it hung until the test's own deadline -- a `cargo check` cannot see this).
+    //
+    // Exiting is safe precisely because the one thing that must be flushed, the browser
+    // profile, was closed and awaited above.
+    match outcome {
+        Ok(()) => std::process::exit(0),
+        Err(e) => {
+            // main would have printed this; do it here since we never return to it.
+            eprintln!("Error: {e:#}");
+            std::process::exit(1);
+        }
     }
-    outcome
 }
 
 /// The signals that mean "stop", registered up front.
