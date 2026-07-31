@@ -57,7 +57,11 @@ anonymous, live account. Two habits worth keeping:
 Checkout is deliberately out of scope and will stay that way. Nothing in this project
 should be able to place an order or spend money.
 
-Product search is also out of scope. This server takes an EAN.
+## Versioning
+
+[ZeroVer](https://0ver.org/): the version stays on `0.x` and the tool surface may change
+between releases. Bumping `version` in `Cargo.toml` on `main` is what cuts a release, so
+treat that edit as the release itself. `pyproject.toml` reads the version from there.
 
 ## AI Usage Policy
 
