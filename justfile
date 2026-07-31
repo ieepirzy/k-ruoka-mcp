@@ -146,6 +146,44 @@ wheel-check: wheel
 wheel-contents: wheel
     @python3 -c "import glob, zipfile; w = sorted(glob.glob('dist/*.whl'))[-1]; print(w); [print(f'{i.file_size:>12,}  {i.filename}') for i in zipfile.ZipFile(w).infolist()]"
 
+# --- Docker ---
+
+docker_image := "k-ruoka-mcp:dev"
+docker_profile_vol := "k-ruoka-mcp-profile"
+
+# Build the local image (tagged k-ruoka-mcp:dev, distinct from anything published)
+[group('docker')]
+docker-build:
+    docker build -t {{ docker_image }} .
+
+# uvx-equivalent smoke test: run it, hold an MCP handshake, no Chrome launch needed
+[group('docker')]
+docker-smoke: docker-build
+    @printf '%s\n%s\n%s\n' \
+      '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"just","version":"0"}}}' \
+      '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+      '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+      | docker run -i --rm {{ docker_image }}
+
+# Sign in inside the container, against the same named volume `docker-serve` reads.
+# Publishes the debug port to the DOCKER HOST'S loopback ONLY: it has no authentication
+# of its own, so never publish it to a public interface. Reach it over SSH from there,
+# same as the bare-metal flow. `login`'s own printed hostname is the container's, not
+# reachable from outside -- tunnel to the actual Docker host instead.
+[group('docker')]
+docker-login port="9222": docker-build
+    docker run -it --rm \
+      -v {{ docker_profile_vol }}:/home/k-ruoka/.local/share/k-ruoka-mcp \
+      -p 127.0.0.1:{{ port }}:{{ port }} \
+      {{ docker_image }} login --port {{ port }}
+
+# Run the server the way an MCP client would, against the volume `docker-login` filled
+[group('docker')]
+docker-serve: docker-build
+    docker run -i --rm \
+      -v {{ docker_profile_vol }}:/home/k-ruoka/.local/share/k-ruoka-mcp \
+      {{ docker_image }}
+
 # --- Running ---
 
 # Sign in to K-Plussa by hand. Writes a live session into the browser profile

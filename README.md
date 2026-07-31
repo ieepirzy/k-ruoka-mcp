@@ -98,18 +98,39 @@ against the same volume:
 ```sh
 docker run -it --rm \
   -v k-ruoka-profile:/home/k-ruoka/.local/share/k-ruoka-mcp \
-  -p 9222:9222 \
+  -p 127.0.0.1:9222:9222 \
   ghcr.io/nikosavola/k-ruoka-mcp login --port 9222
 ```
 
 `login` needs a display it does not have inside the container, so it prints SSH-tunnel
-and `chrome://inspect` instructions the same way a headless Linux machine would; publish
-the debug port with `-p` so they work.
+and `chrome://inspect` instructions the same way a headless Linux machine would. Two
+things about that are Docker-specific and worth knowing:
+
+- **Publish the port to `127.0.0.1`, not to every interface** (`-p 127.0.0.1:9222:9222`,
+  not `-p 9222:9222`). The debug port has no authentication of its own; anything that can
+  reach it gets full control of the browser. Binding the host side to loopback keeps it
+  reachable only from the machine running Docker, exactly like the bare-metal flow.
+- **The `ssh -N -L ...` line it prints names the *container's* hostname**, which nothing
+  outside Docker can resolve. Substitute the actual Docker host (or `localhost`, if you
+  are running this on your own machine) for that part; the port number is still right.
+
+Reachability across the container boundary needed one more thing that is easy to miss:
+Chrome's remote-debugging server refuses connections whose peer address is not literally
+loopback, and a connection arriving through Docker's port-publish NAT does not qualify no
+matter what address Chrome itself binds to (`--remote-debugging-address=0.0.0.0` alone
+does not help; confirmed directly by testing it). `docker-entrypoint.sh` in this image
+runs a small relay for `login` only, in the same network namespace as Chrome, so the
+external connection's *last* hop back to Chrome is genuinely loopback while the relay's
+own listener is what the published port reaches. `serve` never runs this: it has no debug
+port to reach in the first place.
 
 Built from an Alpine base with the release binary and a real Chromium (there is no public
 K-Ruoka API to talk to without one), running as a non-root user under `tini` so
 Chromium's child processes get reaped and `docker stop` triggers the same graceful
 shutdown as a `SIGTERM` anywhere else.
+
+`just docker-login` and `just docker-serve` wrap the commands above with the right volume
+and port flags already filled in.
 
 </details>
 
@@ -400,9 +421,7 @@ Provided without warranty of any kind, see [LICENSE](LICENSE).
 ## Acknowledgements
 
 - [mcp-ruoka](https://github.com/p18a/mcp-ruoka), an MCP server for searching Finnish
-  grocery catalogues (K-Ruoka, S-kaupat, Alko). It pairs naturally with this one, which
-  deliberately does no searching: get an EAN there, pass it here. Store ids are the same
-  id space. It was also the starting point for the browser-automation approach here.
+  grocery catalogues (K-Ruoka, S-kaupat, Alko).
 - [chromiumoxide](https://github.com/mattsse/chromiumoxide), the CDP client that drives
   Chrome.
 - [rmcp](https://github.com/modelcontextprotocol/rust-sdk), the official Rust MCP SDK.

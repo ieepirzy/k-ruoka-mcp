@@ -13,17 +13,26 @@ RUN cargo build --release --bin k-ruoka-mcp
 
 # Runtime: Alpine plus the one thing this server actually needs, a real Chromium to
 # drive over CDP. There is no public K-Ruoka API, so this cannot be made lighter.
+#
+# xvfb-run and xvfb are here for `login` only: it launches a headful (not --headless)
+# Chrome, because the point is a human clicking through a real sign-in flow, and a
+# container has no display of its own to render that into. `login`'s own xvfb-run
+# re-exec (see src/login.rs) needs the wrapper script, which Alpine packages separately
+# from the `xvfb` binary itself. socat is docker-entrypoint.sh's relay for the debug
+# port -- see the comment there for why a relay, rather than just a wider Chrome bind,
+# is what makes it reachable from outside the container.
 FROM alpine:3.22
 # Versions deliberately unpinned: Alpine's repo only keeps recent package builds, so a
 # pinned version here goes stale and breaks the build rather than making it reproducible.
 # hadolint ignore=DL3018
-RUN apk add --no-cache chromium tini ca-certificates \
+RUN apk add --no-cache chromium tini ca-certificates xvfb xvfb-run socat \
     && adduser -D -u 1000 -h /home/k-ruoka k-ruoka \
     # Pre-created and owned by the runtime user so that mounting a volume here (for a
     # persistent login) inherits this ownership on first use rather than the root
     # ownership Docker would otherwise give a fresh mount point.
     && install -d -o k-ruoka -g k-ruoka /home/k-ruoka/.local/share/k-ruoka-mcp
 COPY --from=builder /build/target/release/k-ruoka-mcp /usr/local/bin/k-ruoka-mcp
+COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 USER 1000
 WORKDIR /home/k-ruoka
@@ -33,5 +42,5 @@ ENV K_RUOKA_CHROME=/usr/bin/chromium
 
 # tini as PID 1: Chromium is a multi-process app, and something has to reap the zombies
 # its child processes leave behind since the container has no init of its own.
-ENTRYPOINT ["/sbin/tini", "--", "k-ruoka-mcp"]
+ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
 CMD ["serve"]
