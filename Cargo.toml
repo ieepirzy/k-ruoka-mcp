@@ -1,6 +1,6 @@
 [package]
 name = "k-ruoka-mcp"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "MCP server for managing a K-Ruoka shopping cart for one K-Plussa account"
 repository = "https://github.com/nikosavola/k-ruoka-mcp"
