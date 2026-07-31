@@ -318,6 +318,52 @@ impl KrApi for MockApi {
             });
         }
 
+        // Search: shaped like the live responses, including the awkward bits the view
+        // types have to cope with. Price lives under `mobilescan`, not at the top level,
+        // and the second hit deliberately has neither a price nor a brand -- a real
+        // search returns such rows, and a fake that always supplies them would let a
+        // panicking unwrap through.
+        if path.starts_with("/kr-api/v2/product-search/") {
+            return Ok(json!({
+                "totalHits": 169,
+                "result": [
+                    {"product": {
+                        "ean": BANANA,
+                        "isAvailable": true,
+                        "localizedName": {"finnish": "Pirkka banaani", "english": "Pirkka banana"},
+                        "brand": {"name": "Pirkka"},
+                        "mobilescan": {"pricing": {"normal": {
+                            "price": 0.3, "unit": "kpl", "isApproximate": true,
+                            "unitPrice": {"value": 1.69, "unit": "kg"},
+                        }}},
+                    }},
+                    {"product": {
+                        "ean": LOOSE_MINCE,
+                        "isAvailable": false,
+                        "localizedName": {"finnish": "Irtojauheliha"},
+                    }},
+                ],
+            }));
+        }
+        if path == "/kr-api/stores/search" {
+            return Ok(json!({
+                "totalHits": 2,
+                "results": [
+                    {
+                        "id": STORE, "name": STORE_NAME, "location": "Helsinki",
+                        "chainName": "K-Citymarket", "isWebStore": true,
+                        "hasPickup": true, "hasHomeDelivery": true,
+                    },
+                    // A real store with no online cart, which the tool has to surface
+                    // rather than hide: its id is valid but useless to the other tools.
+                    {
+                        "id": "K815", "name": "K-Market Ruoholahti", "location": "Helsinki",
+                        "chainName": "K-Market", "isWebStore": false,
+                    },
+                ],
+            }));
+        }
+
         if path.starts_with("/kr-api/basket/by-id/")
             && let Some(events) = body
         {

@@ -63,11 +63,13 @@ innehåller en giltig inloggning, så behandla den som ett lösenord.**
 
 ## Verktyg
 
-Alla verktyg tar ett `store_id`, eftersom en korg hör till en butik. Till exempel är `N137`
-K-Citymarket Helsinki Ruoholahti.
+Alla korgverktyg tar ett `store_id`, eftersom en korg hör till en butik. Till exempel är
+`N137` K-Citymarket Helsinki Ruoholahti. `search_stores` hittar ett.
 
 | verktyg | noteringar |
 |---|---|
+| `search_products` | Endast läsning. Hittar EAN-koder utifrån namn, vilket är vad `add_to_cart` behöver. Sök på finska. |
+| `search_stores` | Endast läsning. Hittar det `store_id` som övriga verktyg behöver. |
 | `get_cart` | Endast läsning. Enda källan till `itemId`-värden. |
 | `add_to_cart` | Med EAN-kod. `quantity` är det slutliga antalet, inte ett tillägg. |
 | `update_cart_item` | Sätter exakt antal. 0 tar bort varan. |
@@ -75,7 +77,9 @@ K-Citymarket Helsinki Ruoholahti.
 | `clear_cart` | Tömmer korgen. Kan inte ångras. |
 | `auth_status` | Om den sparade sessionen fortfarande är inloggad. |
 
-Servern kan inte söka efter produkter. Den tar en färdig EAN-kod.
+Vanligt flöde: `search_stores` en gång för att hitta ett butiks-id, sedan
+`search_products` för att omvandla ett namn till en EAN-kod, och därefter `add_to_cart`.
+Sök på finska: sortimentet är finskt, så `maito` hittar betydligt mer än `milk`.
 
 Anrop skickas med minst **500 ms** mellanrum, så att en modell som går igenom en inköpslista
 inte skickar en skur av förfrågningar.

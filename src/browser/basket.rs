@@ -76,8 +76,8 @@ impl<'a> Cart<'a> {
         // added nothing into a reported success on someone else's line item.
         if ean.trim().is_empty() {
             return Err(ApiError::InvalidRequest(
-                "ean must not be empty. Use the `ruoka` plugin's search_products to find \
-                 a product's EAN barcode."
+                "ean must not be empty. Use search_products to find a product's EAN \
+                 barcode."
                     .to_string(),
             ));
         }
@@ -211,7 +211,7 @@ fn clarify_store_error(e: ApiError, store_id: &str) -> ApiError {
             status: 422,
             message: format!(
                 "K-Ruoka rejected store id {store_id:?} as invalid. Store ids look like \
-                     \"N137\"; use the `ruoka` plugin's get_stores to find one."
+                     \"N137\"; use search_stores to find one."
             ),
         },
         _ => e,

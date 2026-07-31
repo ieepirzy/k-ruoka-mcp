@@ -12,13 +12,14 @@ use serde::Deserialize;
 
 use crate::browser::KrApi;
 use crate::browser::basket::Cart;
+use crate::browser::catalog::Catalog;
 use crate::browser::session::ApiError;
-use crate::types::{CartView, DEFAULT_UNIT};
+use crate::types::{CartView, DEFAULT_UNIT, ProductSearchView, StoreSearchView};
 
 /// Hand-copied onto four argument structs before, in two different wordings.
 const STORE_ID_DESC: &str = "K-Ruoka store id, e.g. \"N137\" for K-Citymarket Helsinki \
-                             Ruoholahti. A cart belongs to a store. Same id space as the \
-                             `ruoka` plugin's get_stores.";
+                             Ruoholahti. A cart belongs to a store. Use search_stores to \
+                             find one.";
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct StoreArg {
@@ -26,14 +27,38 @@ pub struct StoreArg {
     pub store_id: String,
 }
 
+const LIMIT_DESC: &str = "How many results to return. Defaults to 10, capped at 50.";
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SearchProductsArg {
+    #[schemars(description = STORE_ID_DESC)]
+    pub store_id: String,
+    #[schemars(
+        description = "What to search for, in Finnish -- the catalogue is Finnish, so \
+                              \"maito\" finds far more than \"milk\". Free text, e.g. \
+                              \"pirkka banaani\" or \"kaurajuoma\"."
+    )]
+    pub query: String,
+    #[schemars(description = LIMIT_DESC)]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SearchStoresArg {
+    #[schemars(
+        description = "Place or store name, e.g. \"Ruoholahti\" or \"K-Citymarket \
+                              Tampere\"."
+    )]
+    pub query: String,
+    #[schemars(description = LIMIT_DESC)]
+    pub limit: Option<u32>,
+}
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct AddArg {
     #[schemars(description = STORE_ID_DESC)]
     pub store_id: String,
-    #[schemars(
-        description = "Product EAN barcode. Use the `ruoka` plugin's search_products \
-                              to find one -- this server does not search."
-    )]
+    #[schemars(description = "Product EAN barcode. Use search_products to find one.")]
     pub ean: String,
     #[schemars(
         description = "Resulting quantity, not an increment. Defaults to 1. Must be greater \
@@ -127,6 +152,10 @@ impl CartServer {
     fn cart(&self) -> Cart<'_> {
         Cart::new(&*self.api)
     }
+
+    fn catalog(&self) -> Catalog<'_> {
+        Catalog::new(&*self.api)
+    }
 }
 
 /// A tool failure the *model* is meant to read and act on.
@@ -170,6 +199,47 @@ fn to_tool_failure(e: ApiError) -> ToolFailure {
 
 #[tool_router]
 impl CartServer {
+    #[tool(
+        annotations(
+            title = "Search products",
+            read_only_hint = true,
+            idempotent_hint = true
+        ),
+        description = "Find products by name and get their EAN barcodes. Read-only. This is \
+                       how you get the `ean` that add_to_cart needs, so call it first when \
+                       the user names a product rather than a barcode. Results are specific \
+                       to the store: price and availability differ between them."
+    )]
+    async fn search_products(
+        &self,
+        Parameters(arg): Parameters<SearchProductsArg>,
+    ) -> Result<Json<ProductSearchView>, ToolFailure> {
+        let found = self
+            .catalog()
+            .search_products(&arg.store_id, &arg.query, arg.limit)
+            .await
+            .map_err(to_tool_failure)?;
+        Ok(Json(found.into()))
+    }
+
+    #[tool(
+        annotations(title = "Search stores", read_only_hint = true, idempotent_hint = true),
+        description = "Find K-Ruoka stores by name or place, and get the `store_id` every \
+                       other tool needs. Read-only. Check `isWebStore`: a store without an \
+                       online cart cannot be used by the other tools."
+    )]
+    async fn search_stores(
+        &self,
+        Parameters(arg): Parameters<SearchStoresArg>,
+    ) -> Result<Json<StoreSearchView>, ToolFailure> {
+        let found = self
+            .catalog()
+            .search_stores(&arg.query, arg.limit)
+            .await
+            .map_err(to_tool_failure)?;
+        Ok(Json(found.into()))
+    }
+
     #[tool(
         annotations(title = "Read cart", read_only_hint = true, idempotent_hint = true),
         description = "Read the K-Ruoka shopping cart for a store. Read-only and safe to call \
@@ -331,12 +401,13 @@ impl ServerHandler for CartServer {
             ))
             .with_instructions(
                 "Manages the shopping cart of one K-Ruoka (k-ruoka.fi) account.\n\n\
-             Every tool needs a `store_id` (e.g. \"N137\"); a cart belongs to a store. \
-             `update_cart_item` and `remove_from_cart` take a basket `itemId`, which only \
-             exists once an item is in the cart and is not the EAN -- get it from `get_cart`. \
-             This server cannot search for products; use the `ruoka` plugin for that and pass \
-             the EAN here. Checkout is deliberately not supported: nothing here can spend \
-             money.",
+             Every tool needs a `store_id` (e.g. \"N137\"); a cart belongs to a store. Use \
+             `search_stores` to find one. Products are added by EAN barcode, which \
+             `search_products` returns -- search in Finnish, since the catalogue is Finnish. \
+             `update_cart_item` and `remove_from_cart` instead take a basket `itemId`, which \
+             only exists once an item is in the cart and is NOT the EAN -- get it from \
+             `get_cart`.\n\n\
+             Checkout is deliberately not supported: nothing here can spend money.",
             )
     }
 }

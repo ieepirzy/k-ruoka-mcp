@@ -129,8 +129,10 @@ expected = sorted([
     "remove_from_cart",
     "clear_cart",
     "auth_status",
+    "search_products",
+    "search_stores",
 ])
-check("all six tools are exposed", names == expected, f"got {names}")
+check("all eight tools are exposed", names == expected, f"got {names}")
 
 print("\n2. get_cart is read-only and reports no account when anonymous")
 cart = s.tool("get_cart", store_id=STORE)
@@ -140,6 +142,51 @@ check("store echoes back", cart.get("store", {}).get("id") == STORE)
 # An anonymous session gets a *valid* basket, not a 401 -- so "it worked" must
 # never be read as "we are logged in".
 check("account is null when anonymous", cart.get("account") is None)
+
+print("\n2b. search_stores finds a store id, and search_products finds an EAN")
+stores = s.tool("search_stores", query="Ruoholahti", limit=5)
+check("search_stores succeeded", "__error__" not in stores, str(stores)[:200])
+if "__error__" not in stores:
+    found = stores.get("results", [])
+    print(
+        f"       {len(found)} store(s), e.g. "
+        + ", ".join(f"{r['storeId']}={r['name']}" for r in found[:2])
+    )
+    check("every store has an id", all(r.get("storeId") for r in found))
+    # The store this suite uses must be discoverable, or the tool is not much use.
+    check(f"{STORE} is among them", any(r["storeId"] == STORE for r in found), str(found)[:200])
+
+hits = s.tool("search_products", store_id=STORE, query="banaani", limit=5)
+check("search_products succeeded", "__error__" not in hits, str(hits)[:200])
+if "__error__" not in hits:
+    results = hits.get("results", [])
+    print(f"       totalHits={hits.get('totalHits')}, showing {len(results)}")
+    check("respected the limit", len(results) <= 5, str(len(results)))
+    check(
+        "every hit has an EAN and a name",
+        all(r.get("ean") and r.get("name") for r in results),
+        str(results)[:200],
+    )
+    check(
+        "at least one hit is priced",
+        any(r.get("price") is not None for r in results),
+        str(results)[:200],
+    )
+    # The point of the tool: an EAN it returns has to be one add_to_cart accepts.
+    if results:
+        searched_ean = results[0]["ean"]
+        added = s.tool("add_to_cart", store_id=STORE, ean=searched_ean, quantity=1)
+        check(
+            "a searched EAN is addable",
+            "__error__" not in added
+            and any(i["ean"] == searched_ean for i in added.get("items", [])),
+            str(added)[:200],
+        )
+        s.tool("clear_cart", store_id=STORE)
+
+# Non-ASCII and spaces have to survive being put into the request URL.
+odd = s.tool("search_products", store_id=STORE, query="pirkka päärynä", limit=2)
+check("a Finnish term with spaces and diacritics works", "__error__" not in odd, str(odd)[:200])
 
 print("\n3. auth_status distinguishes anonymous from signed-in")
 st = s.tool("auth_status", store_id=STORE)

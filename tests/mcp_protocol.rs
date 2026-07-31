@@ -60,6 +60,8 @@ async fn advertises_itself_and_its_tools() -> anyhow::Result<()> {
             "clear_cart",
             "get_cart",
             "remove_from_cart",
+            "search_products",
+            "search_stores",
             "update_cart_item"
         ]
     );
@@ -115,6 +117,140 @@ async fn tool_schemas_mark_the_right_arguments_required() -> anyhow::Result<()> 
             .unwrap_or_default();
         assert!(desc.contains("NOT the EAN"), "{tool}: {desc}");
     }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Search
+// ---------------------------------------------------------------------------
+
+/// The whole point of this tool is handing an `ean` to `add_to_cart`, so that field
+/// existing and being the real barcode is the assertion that matters.
+#[tokio::test]
+async fn search_products_returns_eans_and_prices() -> anyhow::Result<()> {
+    let (client, api) = connect(MockApi::new()).await?;
+
+    let found = call_tool(
+        &client,
+        "search_products",
+        json!({"store_id": STORE, "query": "banaani"}),
+    )
+    .await
+    .unwrap_or_else(|e| panic!("search_products failed: {e}"));
+
+    assert_eq!(found["totalHits"], 169);
+    let first = &found["results"][0];
+    assert_eq!(first["ean"], BANANA);
+    assert_eq!(first["name"], "Pirkka banaani");
+    assert_eq!(first["brand"], "Pirkka");
+    assert_eq!(first["price"], 0.3);
+    assert_eq!(first["priceUnit"], "kpl");
+    // Price lives under `mobilescan.pricing.normal`, and the comparison price is what
+    // makes a weight-priced item comparable at all.
+    assert_eq!(first["comparisonPrice"], "1.69 EUR/kg");
+    assert_eq!(first["priceIsApproximate"], true);
+    assert_eq!(first["isAvailable"], true);
+
+    // A row with no price and no brand must still come back, with `isAvailable` telling
+    // the caller the EAN is real but not buyable here.
+    let second = &found["results"][1];
+    assert_eq!(second["ean"], LOOSE_MINCE);
+    assert_eq!(second["isAvailable"], false);
+    assert!(second.get("price").is_none(), "{second}");
+    assert!(second.get("brand").is_none(), "{second}");
+
+    // Read-only: searching must not touch the cart.
+    assert!(api.mutations().is_empty(), "{:?}", api.mutations());
+    Ok(())
+}
+
+/// The search term is interpolated into a URL path, so it has to be escaped. Without
+/// that, `&limit=` in a query would silently override the real paging parameter.
+#[tokio::test]
+async fn a_search_term_cannot_rewrite_the_request_url() -> anyhow::Result<()> {
+    let (client, api) = connect(MockApi::new()).await?;
+    call_tool(
+        &client,
+        "search_products",
+        json!({"store_id": STORE, "query": "maito & keksit?/x"}),
+    )
+    .await
+    .unwrap();
+
+    let path = &api.calls()[0].path;
+    assert!(path.contains("maito%20%26%20keksit%3F%2Fx"), "{path}");
+    // Exactly one `limit=`, i.e. ours.
+    assert_eq!(path.matches("limit=").count(), 1, "{path}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_empty_search_query_is_refused_before_any_request() -> anyhow::Result<()> {
+    for tool in ["search_products", "search_stores"] {
+        let (client, api) = connect(MockApi::new()).await?;
+        let err = call_tool(&client, tool, json!({"store_id": STORE, "query": "   "}))
+            .await
+            .expect_err("a blank query should be rejected");
+        assert!(err.contains("must not be empty"), "{tool}: {err}");
+        assert!(api.calls().is_empty(), "{tool}: {:?}", api.calls());
+    }
+    Ok(())
+}
+
+/// `store_id` is what every other tool needs, and a store with no online cart is
+/// useless to them -- so both have to be visible in the result.
+#[tokio::test]
+async fn search_stores_returns_ids_and_flags_non_web_stores() -> anyhow::Result<()> {
+    let (client, api) = connect(MockApi::new()).await?;
+
+    let found = call_tool(&client, "search_stores", json!({"query": "Ruoholahti"}))
+        .await
+        .unwrap_or_else(|e| panic!("search_stores failed: {e}"));
+
+    let first = &found["results"][0];
+    assert_eq!(first["storeId"], STORE);
+    assert_eq!(first["chain"], "K-Citymarket");
+    assert_eq!(first["isWebStore"], true);
+    assert_eq!(first["hasPickup"], true);
+
+    let second = &found["results"][1];
+    assert_eq!(second["storeId"], "K815");
+    assert_eq!(second["isWebStore"], false);
+
+    // The term goes in a JSON body here, not the path -- unlike product search.
+    assert_eq!(api.calls()[0].path, "/kr-api/stores/search");
+    assert_eq!(api.calls()[0].body.as_ref().unwrap()["query"], "Ruoholahti");
+    assert!(api.mutations().is_empty(), "{:?}", api.mutations());
+    Ok(())
+}
+
+/// A model asking for hundreds of results would swamp its own context, and the caller
+/// cannot see the cap from the outside, so it is enforced rather than documented.
+#[tokio::test]
+async fn the_result_limit_is_clamped() -> anyhow::Result<()> {
+    let (client, api) = connect(MockApi::new()).await?;
+    call_tool(
+        &client,
+        "search_products",
+        json!({"store_id": STORE, "query": "maito", "limit": 9999}),
+    )
+    .await
+    .unwrap();
+    assert!(
+        api.calls()[0].path.contains("limit=50"),
+        "{:?}",
+        api.calls()
+    );
+
+    let (client, api) = connect(MockApi::new()).await?;
+    call_tool(
+        &client,
+        "search_stores",
+        json!({"query": "x", "limit": 9999}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(api.calls()[0].body.as_ref().unwrap()["limit"], 50);
     Ok(())
 }
 

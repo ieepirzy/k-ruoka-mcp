@@ -276,6 +276,227 @@ impl From<Basket> for CartView {
     }
 }
 
+// --- Product search -----------------------------------------------------------------
+
+/// `POST /kr-api/v2/product-search/{term}`. Only the fields the tool surfaces are
+/// modelled; the response also carries aggregations, brands and suggestions.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductSearchResponse {
+    #[serde(default)]
+    pub result: Vec<ProductHit>,
+    #[serde(default)]
+    pub total_hits: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProductHit {
+    pub product: SearchProduct,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchProduct {
+    #[serde(default)]
+    pub ean: String,
+    #[serde(default)]
+    pub localized_name: LocalizedName,
+    #[serde(default)]
+    pub brand: Option<Brand>,
+    /// Whether it can be bought at this store right now, as opposed to merely existing
+    /// in the catalogue. Surfaced because an unavailable hit is still a valid EAN and
+    /// `add_to_cart` would accept it.
+    #[serde(default)]
+    pub is_available: bool,
+    /// Price lives under `mobilescan`, not at the top level, and is absent often enough
+    /// that it has to be optional.
+    #[serde(default)]
+    pub mobilescan: Option<MobileScan>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Brand {
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MobileScan {
+    #[serde(default)]
+    pub pricing: Option<MobileScanPricing>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MobileScanPricing {
+    #[serde(default)]
+    pub normal: Option<NormalPrice>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NormalPrice {
+    #[serde(default)]
+    pub price: Option<f64>,
+    #[serde(default)]
+    pub unit: Option<String>,
+    /// Comparison price, e.g. per kg, which is what makes weight-priced items
+    /// comparable at all.
+    #[serde(default)]
+    pub unit_price: Option<UnitPrice>,
+    #[serde(default)]
+    pub is_approximate: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UnitPrice {
+    #[serde(default)]
+    pub value: Option<f64>,
+    #[serde(default)]
+    pub unit: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductSearchView {
+    /// How many the catalogue holds in total, which is usually far more than `results`.
+    pub total_hits: u64,
+    pub results: Vec<ProductView>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductView {
+    /// Pass this as `ean` to `add_to_cart`.
+    pub ean: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub brand: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub price: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub price_unit: Option<String>,
+    /// e.g. "1.69 EUR/kg". Absent when K-Ruoka gives no comparison price.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comparison_price: Option<String>,
+    /// Weight-priced: the final charge is settled when the order is picked.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub price_is_approximate: bool,
+    /// `false` means the EAN is real but not buyable at this store right now.
+    pub is_available: bool,
+}
+
+impl From<ProductSearchResponse> for ProductSearchView {
+    fn from(r: ProductSearchResponse) -> Self {
+        Self {
+            total_hits: r.total_hits,
+            results: r.result.into_iter().map(|h| h.product.into()).collect(),
+        }
+    }
+}
+
+impl From<SearchProduct> for ProductView {
+    fn from(p: SearchProduct) -> Self {
+        let normal = p
+            .mobilescan
+            .as_ref()
+            .and_then(|m| m.pricing.as_ref())
+            .and_then(|p| p.normal.as_ref());
+        Self {
+            ean: p.ean,
+            name: p.localized_name.best(),
+            brand: p.brand.and_then(|b| b.name),
+            price: normal.and_then(|n| n.price),
+            price_unit: normal.and_then(|n| n.unit.clone()),
+            comparison_price: normal.and_then(|n| n.unit_price.as_ref()).and_then(|u| {
+                match (u.value, u.unit.as_deref()) {
+                    (Some(value), Some(unit)) => Some(format!("{value} EUR/{unit}")),
+                    _ => None,
+                }
+            }),
+            price_is_approximate: normal.is_some_and(|n| n.is_approximate),
+            is_available: p.is_available,
+        }
+    }
+}
+
+// --- Store search -------------------------------------------------------------------
+
+/// `POST /kr-api/stores/search`, which takes its query in a JSON body rather than the
+/// path or query string like product search does.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoreSearchResponse {
+    #[serde(default)]
+    pub results: Vec<StoreHit>,
+    #[serde(default)]
+    pub total_hits: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoreHit {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub location: Option<String>,
+    #[serde(default)]
+    pub chain_name: Option<String>,
+    /// A store that is not a web store has no cart to operate on, so this decides
+    /// whether an id is usable here at all.
+    #[serde(default)]
+    pub is_web_store: bool,
+    #[serde(default)]
+    pub has_pickup: bool,
+    #[serde(default)]
+    pub has_home_delivery: bool,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct StoreSearchView {
+    pub total_hits: u64,
+    pub results: Vec<StoreView>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct StoreView {
+    /// Pass this as `store_id` to every other tool.
+    pub store_id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub location: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chain: Option<String>,
+    /// `false` means this store has no online cart, so the other tools cannot use it.
+    pub is_web_store: bool,
+    pub has_pickup: bool,
+    pub has_home_delivery: bool,
+}
+
+impl From<StoreSearchResponse> for StoreSearchView {
+    fn from(r: StoreSearchResponse) -> Self {
+        Self {
+            total_hits: r.total_hits,
+            results: r
+                .results
+                .into_iter()
+                .map(|s| StoreView {
+                    store_id: s.id,
+                    name: s.name,
+                    location: s.location,
+                    chain: s.chain_name,
+                    is_web_store: s.is_web_store,
+                    has_pickup: s.has_pickup,
+                    has_home_delivery: s.has_home_delivery,
+                })
+                .collect(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

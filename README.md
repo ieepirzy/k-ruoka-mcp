@@ -200,17 +200,22 @@ profile. Skipping that is how a login silently fails to survive a client restart
 
 ## Tools
 
-Every tool takes a `store_id`, because a cart belongs to a store (e.g. `N137` is
-K-Citymarket Helsinki Ruoholahti).
+Every cart tool takes a `store_id`, because a cart belongs to a store (e.g. `N137` is
+K-Citymarket Helsinki Ruoholahti). `search_stores` is how you find one.
 
 | tool | notes |
 |---|---|
+| `search_products(store_id, query, limit?)` | Read-only. Finds EANs by name, which is what `add_to_cart` needs. Search in Finnish. |
+| `search_stores(query, limit?)` | Read-only. Finds the `store_id` every other tool needs. |
 | `get_cart(store_id)` | Read-only. The only source of `itemId` values. |
 | `add_to_cart(store_id, ean, quantity?, unit?, local_store_id?, allow_substitutes?)` | By EAN. `quantity` is the resulting amount, not an increment. Defaults to 1, `unit` to `kpl`. |
 | `update_cart_item(store_id, item_id, quantity, unit?)` | Sets an exact quantity. 0 removes. `unit` defaults to the item's existing one. |
 | `remove_from_cart(store_id, item_id)` | |
 | `clear_cart(store_id)` | Empties the cart. Not undoable. |
 | `auth_status(store_id)` | Whether the stored session is still signed in. |
+
+The usual path is `search_stores` once to get a `store_id`, then `search_products` to turn
+a name into an EAN, then `add_to_cart`.
 
 Two things worth knowing when calling these:
 
@@ -219,8 +224,10 @@ Two things worth knowing when calling these:
   `get_cart` first. Both validate it and tell you the valid ids if you get it wrong,
   because K-Ruoka itself answers `200` with the cart unchanged for an unknown id, a
   silent no-op that looks like success.
-- **This server cannot search for products.** It takes an EAN barcode; finding one is
-  someone else's job.
+- **Search in Finnish.** The catalogue is Finnish, so `maito` finds far more than
+  `milk`. Results are store-scoped: price and availability genuinely differ per store.
+- **Check `isAvailable` on a search hit.** A product can exist in the catalogue and still
+  not be buyable at that store, and `add_to_cart` will accept the EAN either way.
 - **`add_to_cart` sets a quantity, it doesn't add to one.** Calling it twice with
   `quantity: 1` leaves 1 in the cart, not 2. K-Ruoka's `ADD-ITEM` replaces the
   amount for an EAN that's already present. Measured, not assumed; the website

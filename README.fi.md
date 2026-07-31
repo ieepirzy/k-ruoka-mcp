@@ -87,11 +87,13 @@ työkalukutsulla.
 
 ## Työkalut
 
-Jokainen työkalu ottaa `store_id`:n, koska kori kuuluu kauppaan. Esimerkiksi `N137` on
-K-Citymarket Helsinki Ruoholahti.
+Jokainen korityökalu ottaa `store_id`:n, koska kori kuuluu kauppaan. Esimerkiksi `N137` on
+K-Citymarket Helsinki Ruoholahti. `search_stores` löytää tunnisteen.
 
 | työkalu | huomiot |
 |---|---|
+| `search_products(store_id, query, limit?)` | Vain luku. Etsii EAN-koodit nimellä, ja juuri niitä `add_to_cart` tarvitsee. Hae suomeksi. |
+| `search_stores(query, limit?)` | Vain luku. Löytää `store_id`:n, jonka muut työkalut tarvitsevat. |
 | `get_cart(store_id)` | Vain luku. Ainoa lähde `itemId`-arvoille. |
 | `add_to_cart(store_id, ean, quantity?, unit?, ...)` | EAN-koodilla. `quantity` on lopullinen määrä, ei lisäys. |
 | `update_cart_item(store_id, item_id, quantity, unit?)` | Asettaa täsmällisen määrän. 0 poistaa. |
@@ -107,7 +109,13 @@ Kaksi asiaa kannattaa tietää:
 - **`add_to_cart` asettaa määrän, ei kasvata sitä.** Kaksi kutsua arvolla `quantity: 1`
   jättää koriin yhden. Mitattu, ei arvattu.
 
-Palvelin ei osaa etsiä tuotteita. Se ottaa valmiin EAN-koodin.
+Tavallinen kulku: `search_stores` kerran kaupan tunnisteen löytämiseksi, sitten
+`search_products` muuttamaan nimen EAN-koodiksi, ja lopuksi `add_to_cart`.
+
+- **Hae suomeksi.** Valikoima on suomenkielinen, joten `maito` löytää paljon enemmän kuin
+  `milk`. Tulokset ovat kauppakohtaisia: hinta ja saatavuus vaihtelevat kauppojen välillä.
+- **Tarkista hakutuloksen `isAvailable`.** Tuote voi olla valikoimassa mutta ei ostettavissa
+  kyseisestä kaupasta, ja `add_to_cart` hyväksyy EAN-koodin kumminkin päin.
 
 ### Kutsutaajuuden rajoitus
 
