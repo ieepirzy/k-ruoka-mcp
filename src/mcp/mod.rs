@@ -10,6 +10,7 @@ use rmcp::{ServiceExt, transport::stdio};
 use tokio::signal::unix::{Signal, SignalKind, signal};
 
 use crate::browser::{KrApi, LaunchMode, Session, session::default_profile_dir};
+use crate::login_flow::ChildLogin;
 pub use tools::CartServer;
 
 pub async fn serve() -> Result<()> {
@@ -27,7 +28,10 @@ pub async fn serve() -> Result<()> {
     // never pays for it.
     let session = Arc::new(Session::new(default_profile_dir()?, LaunchMode::Headless)?);
 
-    let handler = CartServer::new(Arc::clone(&session) as Arc<dyn KrApi>);
+    // The login tools drive the `login` subcommand as a child process, which needs the
+    // session itself (to hand over the profile), not just the API seam.
+    let login = Arc::new(ChildLogin::new(Arc::clone(&session)));
+    let handler = CartServer::with_login(Arc::clone(&session) as Arc<dyn KrApi>, login);
     let serving = async {
         // The handshake is inside the select on purpose: a signal arriving while the
         // server is still waiting for `initialize` must be handled too, and it was

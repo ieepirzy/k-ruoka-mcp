@@ -371,6 +371,9 @@ pub struct Session {
     /// Only ever read or written while holding the `live` lock, which is what makes
     /// `Relaxed` sufficient and the check race-free.
     closed: AtomicBool,
+    /// Set while an interactive login owns the profile. Same lock discipline as
+    /// `closed`: only touched under the `live` lock.
+    login_in_progress: AtomicBool,
     /// Next value for `Live::generation`.
     next_generation: AtomicU64,
     /// `X-K-Build-Number`. Learned from any `/kr-api/` response's `k-ruoka-build`
@@ -390,6 +393,7 @@ impl Session {
             user_agent: user_agent()?,
             live: Mutex::new(None),
             closed: AtomicBool::new(false),
+            login_in_progress: AtomicBool::new(false),
             next_generation: AtomicU64::new(0),
             build: Mutex::new(None),
             limiter: RateLimiter::new(min_request_interval()),
@@ -422,7 +426,7 @@ impl Session {
     /// profile's single-instance lock.
     async fn ensure_live(&self) -> Result<(), ApiError> {
         let mut guard = self.live.lock().await;
-        self.refuse_if_closed()?;
+        self.refuse_if_unavailable()?;
         if let Some(live) = guard.as_ref() {
             // Cheap liveness probe: a dead browser fails this, a live one on the
             // wrong URL just needs re-navigating.
@@ -575,17 +579,52 @@ impl Session {
         Ok(())
     }
 
+    /// Hand the profile over to an interactive login, and stop serving until it is done.
+    ///
+    /// A profile directory supports exactly one Chrome (`SingletonLock`), so a headful
+    /// login browser cannot coexist with this session's headless one. Rather than teach
+    /// `serve` to run headful, it lets go entirely: shut the browser down, refuse to
+    /// launch another, and let the login process own the profile meanwhile. The login
+    /// writes its cookies there, and the next tool call relaunches into them.
+    pub async fn release_for_login(&self) -> Result<(), ApiError> {
+        let mut guard = self.live.lock().await;
+        self.refuse_if_unavailable()?;
+        // Set before the teardown so a concurrent tool call cannot relaunch into the gap.
+        self.login_in_progress.store(true, Ordering::Relaxed);
+        if let Some(live) = guard.take() {
+            live.shutdown().await;
+        }
+        Ok(())
+    }
+
+    /// Start serving again after [`Session::release_for_login`], whatever the outcome.
+    ///
+    /// Deliberately does not relaunch: the browser comes back lazily on the next tool
+    /// call, which is also when a fresh login would be picked up.
+    pub async fn resume_after_login(&self) {
+        let _guard = self.live.lock().await;
+        self.login_in_progress.store(false, Ordering::Relaxed);
+    }
+
     /// Must be called while holding the `live` lock.
-    fn refuse_if_closed(&self) -> Result<(), ApiError> {
+    fn refuse_if_unavailable(&self) -> Result<(), ApiError> {
         if self.closed.load(Ordering::Relaxed) {
             return Err(closed_underneath_us());
+        }
+        if self.login_in_progress.load(Ordering::Relaxed) {
+            return Err(ApiError::InvalidRequest(
+                "a login is in progress and it owns the browser profile until it \
+                 finishes. Call login_status to see how it is going, or cancel_login to \
+                 give up, then retry."
+                    .to_string(),
+            ));
         }
         Ok(())
     }
 
     /// Relaunch against the same profile directory. This is the Cloudflare-block
     /// remedy. It deliberately does not delete anything: the profile holds a real
-    /// credential, unlike the anonymous `mcp-ruoka` plugin this technique came from.
+    /// credential, so it must survive a block rather than being cleared.
     /// Replace the browser generation `blocked` -- unless someone already has.
     /// `None` means the caller had no browser to blame, so anything currently in the
     /// slot is by definition newer and there is nothing to do.
@@ -596,7 +635,7 @@ impl Session {
     /// calls into exactly one relaunch.
     async fn relaunch(&self, blocked: Option<u64>) -> Result<(), ApiError> {
         let mut guard = self.live.lock().await;
-        self.refuse_if_closed()?;
+        self.refuse_if_unavailable()?;
         if !should_replace(guard.as_ref().map(|live| live.generation), blocked) {
             return Ok(());
         }

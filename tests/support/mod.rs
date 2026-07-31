@@ -397,6 +397,104 @@ pub async fn connect(
     Ok((client, handle))
 }
 
+/// A scripted [`LoginFlow`], so the login tools can be tested without a browser.
+///
+/// The real one spawns `k-ruoka-mcp login` and waits for a human, which no test can do.
+/// What is worth testing above that seam is the same thing as everywhere else here: that
+/// the tool exists, routes, and hands the caller something usable.
+#[derive(Clone, Default)]
+pub struct MockLogin {
+    state: Arc<Mutex<MockLoginState>>,
+}
+
+#[derive(Default)]
+struct MockLoginState {
+    calls: Vec<String>,
+    /// What `status` should report next, so a test can walk through the flow.
+    next_state: Option<(&'static str, Option<&'static str>)>,
+}
+
+impl MockLogin {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Make the next `login_status` report this state, and account if any.
+    pub fn reporting(self, state: &'static str, account: Option<&'static str>) -> Self {
+        self.state.lock().unwrap().next_state = Some((state, account));
+        self
+    }
+
+    pub fn calls(&self) -> Vec<String> {
+        self.state.lock().unwrap().calls.clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl k_ruoka_mcp::login_flow::LoginFlow for MockLogin {
+    async fn start(
+        &self,
+        debug_port: u16,
+    ) -> Result<k_ruoka_mcp::login_flow::LoginProgress, ApiError> {
+        self.state
+            .lock()
+            .unwrap()
+            .calls
+            .push(format!("start:{debug_port}"));
+        Ok(serde_json::from_value(json!({
+            "state": "waiting",
+            "detail": "A browser is open.",
+            "instructions": "1. Switch to it and pick the tab titled ...",
+        }))
+        .unwrap())
+    }
+
+    async fn status(&self) -> Result<k_ruoka_mcp::login_flow::LoginProgress, ApiError> {
+        let mut state = self.state.lock().unwrap();
+        state.calls.push("status".to_string());
+        let (name, account) = state.next_state.unwrap_or(("waiting", None));
+        Ok(serde_json::from_value(json!({
+            "state": name,
+            "detail": "scripted",
+            "account": account,
+        }))
+        .unwrap())
+    }
+
+    async fn cancel(&self) -> Result<k_ruoka_mcp::login_flow::LoginProgress, ApiError> {
+        self.state.lock().unwrap().calls.push("cancel".to_string());
+        Ok(serde_json::from_value(json!({
+            "state": "notStarted",
+            "detail": "Login cancelled.",
+        }))
+        .unwrap())
+    }
+}
+
+/// Like [`connect`], with the login tools wired to a scripted flow.
+pub async fn connect_with_login(
+    api: MockApi,
+    login: MockLogin,
+) -> anyhow::Result<(
+    rmcp::service::RunningService<rmcp::RoleClient, ()>,
+    MockApi,
+    MockLogin,
+)> {
+    use rmcp::ServiceExt;
+
+    let (server_io, client_io) = tokio::io::duplex(1 << 16);
+    let api_handle = api.clone();
+    let login_handle = login.clone();
+    let server = k_ruoka_mcp::mcp::CartServer::with_login(Arc::new(api), Arc::new(login));
+    tokio::spawn(async move {
+        if let Ok(running) = server.serve(server_io).await {
+            let _ = running.waiting().await;
+        }
+    });
+    let client = ().serve(client_io).await?;
+    Ok((client, api_handle, login_handle))
+}
+
 /// How the server reported a failure. MCP has two channels and the difference
 /// decides whether the model ever sees the text (see `ToolFailure`).
 #[derive(Debug)]

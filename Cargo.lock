@@ -818,6 +818,7 @@ dependencies = [
  "chromiumoxide",
  "clap",
  "futures",
+ "libc",
  "rmcp",
  "schemars",
  "serde",

@@ -48,26 +48,33 @@ suoraan ympäristön `bin/`-hakemistoon.
 
 ## Käyttöönotto
 
-### 1. Kirjaudu sisään kerran käsin
+### 1. Kirjaudu sisään kerran
+
+Joko terminaalissa:
 
 ```bash
 uvx k-ruoka-mcp login
 ```
 
-Tunnuksia ja monivaiheista tunnistautumista ei automatisoida, eikä tämä ohjelma näe niitä.
-Komento avaa selaimen ja odottaa, kunnes K-Ruoka raportoi kirjautuneesta tilistä. Paina
-*Kirjaudu* ja kirjaudu normaalisti.
+Tai kun palvelin on rekisteröity (kohta 2), pyydä avustajaa kirjaamaan sinut sisään. Se
+avaa selaimen ja antaa ohjeet.
 
-Avautuu kaksi välilehteä. Käytä sitä, jonka otsikko on *Tuotteet | K-Ruoka Verkkokauppa*.
-Toinen (`[k-ruoka-mcp] poller`) on tämä prosessi tarkistamassa kirjautumista, ja se
-navigoidaan pois alta muutaman sekunnin välein.
+Kummin päin tahansa selain avautuu k-ruoka.fi-sivulle. Paina *Kirjaudu*, kirjaudu
+normaalisti, ja siinä se: kirjautuminen huomataan itsestään ja selain sulkeutuu. Tunnuksia
+ei automatisoida eikä tämä ohjelma näe niitä.
 
-Näytöttömällä koneella komento käynnistyy uudelleen `xvfb-run`in alla ja tulostaa ohjeet
-selaimen käyttöön `ssh -L` -tunnelin ja `chrome://inspect`-sivun kautta.
+Kaksi asiaa on hyvä tietää:
 
-Istunto tallennetaan hakemistoon `~/.local/share/k-ruoka-mcp/profile` (oikeudet `0700`,
-ohita: `K_RUOKA_PROFILE`). **Se sisältää voimassa olevan kirjautumisen, joten käsittele
-sitä kuin salasanaa.**
+- **Auki on kaksi välilehteä.** Käytä sitä, jonka otsikko on *Tuotteet | K-Ruoka
+  Verkkokauppa*. Toinen (`[k-ruoka-mcp] poller`) tarkkailee kirjautumista ja navigoi pois
+  alta.
+- **Näytöttömällä koneella**, palvelimella tai Dockerissa, saat ikkunan sijaan `ssh`
+  -komennon ja `chrome://inspect`-osoitteen, joilla käytät selainta omalta koneeltasi.
+  Seuraa tulostettuja ohjeita; ne ovat täsmälliset.
+
+Kirjautuminen tallennetaan hakemistoon `~/.local/share/k-ruoka-mcp/profile` (ohita:
+`K_RUOKA_PROFILE`). **Käsittele hakemistoa kuin salasanaa.** Aja `login` uudelleen, kun
+istunto vanhenee.
 
 ### 2. Rekisteröi palvelin
 
@@ -83,7 +90,7 @@ sitä kuin salasanaa.**
 ```
 
 Alikomentoa ei tarvita, koska `serve` on oletus. Chrome käynnistyy vasta ensimmäisellä
-työkalukutsulla.
+työkalukutsulla, joten palvelin itse käynnistyy heti.
 
 ## Työkalut
 
@@ -100,6 +107,9 @@ K-Citymarket Helsinki Ruoholahti. `search_stores` löytää tunnisteen.
 | `remove_from_cart(store_id, item_id)` | |
 | `clear_cart(store_id)` | Tyhjentää korin. Ei peruttavissa. |
 | `auth_status(store_id)` | Onko tallennettu istunto vielä kirjautunut. |
+| `start_login(port?)` | Avaa selaimen kirjautumista varten ja palauttaa ohjeet käyttäjälle. |
+| `login_status()` | `waiting`, `signedIn`, `failed` tai `notStarted`. |
+| `cancel_login()` | Keskeyttää kirjautumisen ja sulkee selaimen. |
 
 Kaksi asiaa kannattaa tietää:
 
@@ -116,6 +126,19 @@ Tavallinen kulku: `search_stores` kerran kaupan tunnisteen löytämiseksi, sitte
   `milk`. Tulokset ovat kauppakohtaisia: hinta ja saatavuus vaihtelevat kauppojen välillä.
 - **Tarkista hakutuloksen `isAvailable`.** Tuote voi olla valikoimassa mutta ei ostettavissa
   kyseisestä kaupasta, ja `add_to_cart` hyväksyy EAN-koodin kumminkin päin.
+
+### Kirjautuminen avustajan kautta
+
+`start_login` antaa mallin hoitaa kirjautumisen sen sijaan, että se käskisi avaamaan
+terminaalin. Se palauttaa samat ohjeet, jotka `login` tulostaa, ja ne vaihtelevat koneen
+mukaan, joten avustajan kannattaa välittää ne sellaisenaan.
+
+- **Korityökalut ovat tauolla kirjautumisen ajan**, ja ne kertovat sen. Yksi selain per
+  profiili, joten palvelin lainaa omansa kirjautumiselle. `cancel_login` ottaa sen
+  takaisin.
+- **Dockerissa julkaise debug-portti heti käynnistyksessä** (`-p 127.0.0.1:9222:9222`) ja
+  anna `start_login`in käyttää oletusporttia. Käynnissä oleva kontti ei voi julkaista
+  porttia jälkikäteen.
 
 ### Kutsutaajuuden rajoitus
 

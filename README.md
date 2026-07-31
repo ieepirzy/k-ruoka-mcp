@@ -102,32 +102,24 @@ docker run -it --rm \
   ghcr.io/nikosavola/k-ruoka-mcp login --port 9222
 ```
 
-`login` needs a display it does not have inside the container, so it prints SSH-tunnel
-and `chrome://inspect` instructions the same way a headless Linux machine would. Two
-things about that are Docker-specific and worth knowing:
+Inside a container there is no screen, so `login` gives you the `ssh` and
+`chrome://inspect` route rather than a window. Two Docker-specific things:
 
-- **Publish the port to `127.0.0.1`, not to every interface** (`-p 127.0.0.1:9222:9222`,
-  not `-p 9222:9222`). The debug port has no authentication of its own; anything that can
-  reach it gets full control of the browser. Binding the host side to loopback keeps it
-  reachable only from the machine running Docker, exactly like the bare-metal flow.
-- **The `ssh -N -L ...` line it prints names the *container's* hostname**, which nothing
-  outside Docker can resolve. Substitute the actual Docker host (or `localhost`, if you
-  are running this on your own machine) for that part; the port number is still right.
+- **Publish the port to `127.0.0.1`, not to every interface.** The debug port has no
+  password of its own, so anything that can reach it can drive the browser. Keeping the
+  host side on loopback means only the machine running Docker can.
+- **The `ssh` line it prints names the container's own hostname**, which nothing outside
+  Docker can resolve. Put the real Docker host there instead (or `localhost`, if that is
+  your own machine); the port number is right as printed.
 
-Reachability across the container boundary needed one more thing that is easy to miss:
-Chrome's remote-debugging server refuses connections whose peer address is not literally
-loopback, and a connection arriving through Docker's port-publish NAT does not qualify no
-matter what address Chrome itself binds to (`--remote-debugging-address=0.0.0.0` alone
-does not help; confirmed directly by testing it). `docker-entrypoint.sh` in this image
-runs a small relay for `login` only, in the same network namespace as Chrome, so the
-external connection's *last* hop back to Chrome is genuinely loopback while the relay's
-own listener is what the published port reaches. `serve` never runs this: it has no debug
-port to reach in the first place.
+Getting that port reachable at all needs a small relay, which the image runs for you:
+Chrome only accepts debug connections arriving from loopback, and one coming through
+Docker's published port does not look that way to it. The relay watches
+`K_RUOKA_DEBUG_PORT` (9222), which is why you publish that port and let `start_login` use
+its default rather than passing one the container never mapped.
 
-Built from an Alpine base with the release binary and a real Chromium (there is no public
-K-Ruoka API to talk to without one), running as a non-root user under `tini` so
-Chromium's child processes get reaped and `docker stop` triggers the same graceful
-shutdown as a `SIGTERM` anywhere else.
+The image is Alpine plus the release binary and a real Chromium, running as a non-root
+user under `tini` so `docker stop` shuts the browser down cleanly.
 
 `just docker-login` and `just docker-serve` wrap the commands above with the right volume
 and port flags already filled in.
@@ -136,29 +128,33 @@ and port flags already filled in.
 
 ## Setup
 
-### 1. Log in (once, by hand)
+### 1. Sign in (once)
+
+Either in a terminal:
 
 ```sh
 uvx k-ruoka-mcp login
 ```
 
-Credentials and MFA are never automated. This only opens a browser and waits for
-K-Ruoka to start reporting a signed-in account.
+Or, once the server is registered (step 2), just ask your assistant to sign you in. It
+opens the browser and gives you the steps.
 
-On a headless machine it re-execs itself under `xvfb-run` and prints the exact
-commands to drive that browser from your laptop: an `ssh -L` tunnel to Chrome's
-debug port (`--port`, default 9222), then `chrome://inspect`, which gives you a live
-clickable view of the page. Click *Kirjaudu* and sign in normally. It exits once it
-sees the account.
+Either way a browser opens on k-ruoka.fi. Click *Kirjaudu*, sign in as you normally
+would, and you are done: the login is noticed on its own and the browser closes. Your
+credentials are never automated, and nothing here sees them.
 
-Two k-ruoka.fi tabs appear in `chrome://inspect`. Use the one titled *Tuotteet |
-K-Ruoka Verkkokauppa*; the one labelled `[k-ruoka-mcp] poller` is this process
-checking whether you're signed in yet, and it gets navigated out from under you.
-The printed instructions say this too.
+Two things to expect:
 
-The session is stored in `~/.local/share/k-ruoka-mcp/profile` (mode `0700`,
-override with `K_RUOKA_PROFILE`). **It holds a live login, so treat it as a
-credential.** It is not in the repo and must not be committed.
+- **Two tabs open.** Use the one titled *Tuotteet | K-Ruoka Verkkokauppa*. The other,
+  marked `[k-ruoka-mcp] poller`, is the login watching for your account, and it navigates
+  away under you.
+- **On a machine with no screen**, a server or Docker, you get an `ssh` command and a
+  `chrome://inspect` address instead, so you can click through the browser from your own
+  laptop. Follow what it prints; the steps are exact.
+
+The login is saved in `~/.local/share/k-ruoka-mcp/profile` (override with
+`K_RUOKA_PROFILE`). **Treat that directory like a password.** Run `login` again if the
+session expires.
 
 ### 2. Register the server
 
@@ -173,8 +169,8 @@ credential.** It is not in the repo and must not be committed.
 }
 ```
 
-No subcommand is needed: `serve` is the default, since being an MCP server is the
-whole job. `uvx k-ruoka-mcp serve` is equivalent if you prefer it explicit.
+`serve` is the default, so no subcommand is needed. Chrome starts on the first tool call,
+so the server itself starts instantly.
 
 <details>
 <summary>Using a locally built binary</summary>
@@ -192,12 +188,6 @@ whole job. `uvx k-ruoka-mcp serve` is equivalent if you prefer it explicit.
 
 </details>
 
-Chrome launches lazily on the first tool call, so `serve` starts instantly.
-
-On shutdown, whether the client closes stdin or sends `SIGTERM` (both normal), the
-browser is closed gracefully so Chrome flushes cookies back into the
-profile. Skipping that is how a login silently fails to survive a client restart.
-
 ## Tools
 
 Every cart tool takes a `store_id`, because a cart belongs to a store (e.g. `N137` is
@@ -213,6 +203,9 @@ K-Citymarket Helsinki Ruoholahti). `search_stores` is how you find one.
 | `remove_from_cart(store_id, item_id)` | |
 | `clear_cart(store_id)` | Empties the cart. Not undoable. |
 | `auth_status(store_id)` | Whether the stored session is still signed in. |
+| `start_login(port?)` | Opens a browser for the user to sign in, and returns the instructions to relay. |
+| `login_status()` | `waiting`, `signedIn`, `failed` or `notStarted`. |
+| `cancel_login()` | Gives up on a login in progress and closes its browser. |
 
 The usual path is `search_stores` once to get a `store_id`, then `search_products` to turn
 a name into an EAN, then `add_to_cart`.
@@ -240,6 +233,18 @@ front rather than reported as success: a non-positive `quantity` on `add_to_cart
 would add nothing and return `200`), a negative one on `update_cart_item` (it would
 remove the item, duplicating `0`), and an EAN K-Ruoka has no record of (it would
 insert a placeholder item named *Unknown product*, which is rolled back).
+
+### Signing in through the assistant
+
+`start_login` lets a model handle the sign-in rather than sending you off to a terminal.
+It hands back the same steps the `login` command prints, and those differ depending on the
+machine, so an assistant should relay them as they come rather than paraphrasing.
+
+- **The cart tools pause while a login is running**, and say so. One browser per profile,
+  so the server lends its own out for the duration. `cancel_login` takes it back.
+- **In Docker, publish the debug port when you start the container** (`-p
+  127.0.0.1:9222:9222`) and let `start_login` use its default. A running container cannot
+  publish a port afterwards.
 
 ### Rate limiting
 

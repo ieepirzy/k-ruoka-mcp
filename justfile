@@ -177,11 +177,14 @@ docker-login port="9222": docker-build
       -p 127.0.0.1:{{ port }}:{{ port }} \
       {{ docker_image }} login --port {{ port }}
 
-# Run the server the way an MCP client would, against the volume `docker-login` filled
+# Run the server the way an MCP client would, against the volume `docker-login` filled.
+# Publishes the debug port so the start_login tool's browser is reachable; see the README
+# on why that has to be decided at container start.
 [group('docker')]
-docker-serve: docker-build
+docker-serve port="9222": docker-build
     docker run -i --rm \
       -v {{ docker_profile_vol }}:/home/k-ruoka/.local/share/k-ruoka-mcp \
+      -p 127.0.0.1:{{ port }}:{{ port }} \
       {{ docker_image }}
 
 # --- Running ---

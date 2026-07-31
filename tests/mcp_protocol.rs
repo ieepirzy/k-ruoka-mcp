@@ -19,7 +19,8 @@ mod support;
 
 use serde_json::json;
 use support::{
-    BANANA, Failure, LOOSE_MINCE, MockApi, PHANTOM, STORE, call_tool, connect, try_call_tool,
+    BANANA, Failure, LOOSE_MINCE, MockApi, MockLogin, PHANTOM, STORE, call_tool, connect,
+    connect_with_login, try_call_tool,
 };
 
 // ---------------------------------------------------------------------------
@@ -57,11 +58,14 @@ async fn advertises_itself_and_its_tools() -> anyhow::Result<()> {
         [
             "add_to_cart",
             "auth_status",
+            "cancel_login",
             "clear_cart",
             "get_cart",
+            "login_status",
             "remove_from_cart",
             "search_products",
             "search_stores",
+            "start_login",
             "update_cart_item"
         ]
     );
@@ -116,6 +120,79 @@ async fn tool_schemas_mark_the_right_arguments_required() -> anyhow::Result<()> 
             .as_str()
             .unwrap_or_default();
         assert!(desc.contains("NOT the EAN"), "{tool}: {desc}");
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Login, driven through MCP
+// ---------------------------------------------------------------------------
+
+/// The instructions are the payload: they differ between a desktop and a headless host,
+/// so the caller has to relay what the server produced rather than inventing steps.
+#[tokio::test]
+async fn start_login_returns_instructions_to_relay() -> anyhow::Result<()> {
+    let (client, _api, login) = connect_with_login(MockApi::new(), MockLogin::new()).await?;
+
+    let progress = call_tool(&client, "start_login", json!({}))
+        .await
+        .unwrap_or_else(|e| panic!("start_login failed: {e}"));
+
+    assert_eq!(progress["state"], "waiting");
+    assert!(
+        progress["instructions"]
+            .as_str()
+            .is_some_and(|i| i.contains("pick the tab")),
+        "{progress}"
+    );
+    // The subcommand's own default, so its printed steps and the tool agree.
+    assert_eq!(login.calls(), ["start:9222"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn start_login_passes_an_explicit_port_through() -> anyhow::Result<()> {
+    let (client, _api, login) = connect_with_login(MockApi::new(), MockLogin::new()).await?;
+    call_tool(&client, "start_login", json!({"port": 9333}))
+        .await
+        .unwrap();
+    assert_eq!(login.calls(), ["start:9333"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn login_status_reports_the_account_once_signed_in() -> anyhow::Result<()> {
+    let (client, _api, _login) = connect_with_login(
+        MockApi::new(),
+        MockLogin::new().reporting("signedIn", Some("Niko Savola <a@b.c>")),
+    )
+    .await?;
+
+    let progress = call_tool(&client, "login_status", json!({})).await.unwrap();
+    assert_eq!(progress["state"], "signedIn");
+    assert_eq!(progress["account"], "Niko Savola <a@b.c>");
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancel_login_is_routed() -> anyhow::Result<()> {
+    let (client, _api, login) = connect_with_login(MockApi::new(), MockLogin::new()).await?;
+    let progress = call_tool(&client, "cancel_login", json!({})).await.unwrap();
+    assert_eq!(progress["state"], "notStarted");
+    assert_eq!(login.calls(), ["cancel"]);
+    Ok(())
+}
+
+/// An embedding with no way to drive a browser still exposes the tools, and says why it
+/// cannot help rather than failing opaquely -- a missing tool is harder to explain.
+#[tokio::test]
+async fn the_login_tools_explain_themselves_when_unavailable() -> anyhow::Result<()> {
+    let (client, _) = connect(MockApi::new()).await?;
+    for tool in ["start_login", "login_status", "cancel_login"] {
+        let err = call_tool(&client, tool, json!({}))
+            .await
+            .expect_err("should refuse without a login flow");
+        assert!(err.contains("k-ruoka-mcp login"), "{tool}: {err}");
     }
     Ok(())
 }

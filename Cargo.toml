@@ -30,3 +30,8 @@ tokio = { version = "1", features = ["full"] }
 
 [dev-dependencies]
 rmcp = { version = "3", features = ["client"] }
+
+# Only for signalling a login child's whole process group: Chrome is a grandchild, so
+# killing just the child leaves it holding the profile lock.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

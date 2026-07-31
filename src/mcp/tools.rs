@@ -14,6 +14,7 @@ use crate::browser::KrApi;
 use crate::browser::basket::Cart;
 use crate::browser::catalog::Catalog;
 use crate::browser::session::ApiError;
+use crate::login_flow::{LoginFlow, LoginProgress};
 use crate::types::{CartView, DEFAULT_UNIT, ProductSearchView, StoreSearchView};
 
 /// Hand-copied onto four argument structs before, in two different wordings.
@@ -28,6 +29,20 @@ pub struct StoreArg {
 }
 
 const LIMIT_DESC: &str = "How many results to return. Defaults to 10, capped at 50.";
+
+/// Matches the `login` subcommand's own default, so the printed instructions and this
+/// tool agree without the caller having to think about it.
+const DEFAULT_DEBUG_PORT: u16 = 9222;
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct StartLoginArg {
+    #[schemars(
+        description = "Chrome remote-debugging port, for reaching the browser on a \
+                              headless host. Defaults to 9222. Only change it if that port \
+                              is taken."
+    )]
+    pub port: Option<u16>,
+}
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SearchProductsArg {
@@ -135,6 +150,11 @@ pub struct AuthStatus {
 #[derive(Clone)]
 pub struct CartServer {
     api: Arc<dyn KrApi>,
+    /// `None` when nothing can drive an interactive login, which is the case for the
+    /// tests and would be the case for any other embedding. The login tools then say
+    /// so rather than being absent, since a missing tool is harder to explain than one
+    /// that tells you why it cannot help.
+    login: Option<Arc<dyn LoginFlow>>,
     /// Read by the `#[tool_handler]`-generated `call_tool`/`list_tools`, which
     /// dead-code analysis does not see through.
     #[allow(dead_code)]
@@ -145,8 +165,27 @@ impl CartServer {
     pub fn new(api: Arc<dyn KrApi>) -> Self {
         Self {
             api,
+            login: None,
             tool_router: Self::tool_router(),
         }
+    }
+
+    pub fn with_login(api: Arc<dyn KrApi>, login: Arc<dyn LoginFlow>) -> Self {
+        Self {
+            api,
+            login: Some(login),
+            tool_router: Self::tool_router(),
+        }
+    }
+
+    fn login_flow(&self) -> Result<&Arc<dyn LoginFlow>, ToolFailure> {
+        self.login.as_ref().ok_or_else(|| {
+            ToolFailure(
+                "This server cannot drive an interactive login. Run `k-ruoka-mcp login` \
+                 in a terminal on the machine hosting it instead."
+                    .to_string(),
+            )
+        })
     }
 
     fn cart(&self) -> Cart<'_> {
@@ -199,6 +238,51 @@ fn to_tool_failure(e: ApiError) -> ToolFailure {
 
 #[tool_router]
 impl CartServer {
+    #[tool(
+        annotations(title = "Start login", read_only_hint = false, idempotent_hint = true),
+        description = "Open a browser for the user to sign in to K-Plussa by hand, and \
+                       return the instructions to give them. Use this when auth_status says \
+                       the session is not signed in. Relay the returned `instructions` \
+                       VERBATIM: they differ between a desktop and a headless host, and \
+                       only the running server knows which it is. Then poll login_status. \
+                       This never sees the user's credentials, and it takes over the \
+                       browser, so the cart tools will not work until the login finishes \
+                       or is cancelled."
+    )]
+    async fn start_login(
+        &self,
+        Parameters(arg): Parameters<StartLoginArg>,
+    ) -> Result<Json<LoginProgress>, ToolFailure> {
+        let progress = self
+            .login_flow()?
+            .start(arg.port.unwrap_or(DEFAULT_DEBUG_PORT))
+            .await
+            .map_err(to_tool_failure)?;
+        Ok(Json(progress))
+    }
+
+    #[tool(
+        annotations(title = "Login status", read_only_hint = true, idempotent_hint = true),
+        description = "How the login started by start_login is going: `waiting`, \
+                       `signedIn`, `failed`, or `notStarted`. Poll this every 10 to 20 \
+                       seconds while the user signs in; they may need a couple of minutes \
+                       for a password manager and MFA."
+    )]
+    async fn login_status(&self) -> Result<Json<LoginProgress>, ToolFailure> {
+        let progress = self.login_flow()?.status().await.map_err(to_tool_failure)?;
+        Ok(Json(progress))
+    }
+
+    #[tool(
+        annotations(title = "Cancel login", idempotent_hint = true),
+        description = "Give up on a login in progress and close its browser, so the cart \
+                       tools work again. Any previously stored session is left untouched."
+    )]
+    async fn cancel_login(&self) -> Result<Json<LoginProgress>, ToolFailure> {
+        let progress = self.login_flow()?.cancel().await.map_err(to_tool_failure)?;
+        Ok(Json(progress))
+    }
+
     #[tool(
         annotations(
             title = "Search products",
@@ -407,6 +491,10 @@ impl ServerHandler for CartServer {
              `update_cart_item` and `remove_from_cart` instead take a basket `itemId`, which \
              only exists once an item is in the cart and is NOT the EAN -- get it from \
              `get_cart`.\n\n\
+             If `auth_status` says the session is not signed in, the cart reachable is an \
+             anonymous one rather than the user's. Call `start_login` and relay its \
+             instructions verbatim, then poll `login_status`. Credentials are never \
+             automated and this server never sees them.\n\n\
              Checkout is deliberately not supported: nothing here can spend money.",
             )
     }

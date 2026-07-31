@@ -65,8 +65,20 @@ pub async fn run(debug_port: u16, store_id: &str) -> Result<()> {
         LOGIN_TIMEOUT.as_secs() / 60
     ));
 
+    let mut signalled = false;
     while Instant::now() < deadline {
-        tokio::time::sleep(POLL_EVERY).await;
+        // Signals matter here as much as in `serve`: without this, terminating a `login`
+        // kills this process and leaves Chrome running, holding the profile's
+        // SingletonLock so nothing can launch against it afterwards. That is also how
+        // `start_login`'s cancel path stops it.
+        tokio::select! {
+            _ = tokio::time::sleep(POLL_EVERY) => {}
+            name = terminate_signal() => {
+                println!("\n{name}, closing the browser.");
+                signalled = true;
+                break;
+            }
+        }
         mark_poller_tab(&session).await;
 
         // A failure here is expected and uninteresting while the user is still
@@ -78,6 +90,9 @@ pub async fn run(debug_port: u16, store_id: &str) -> Result<()> {
             result = Ok(());
             break;
         }
+    }
+    if signalled {
+        result = Err(anyhow::anyhow!("cancelled before signing in"));
     }
 
     // Graceful close, so Chrome flushes cookies into the profile. Without this
@@ -91,6 +106,34 @@ pub async fn run(debug_port: u16, store_id: &str) -> Result<()> {
             Ok(())
         }
         Err(e) => Err(e),
+    }
+}
+
+/// Resolves on SIGTERM or SIGINT, naming which arrived. Never resolves where those do
+/// not exist, which leaves the poll loop behaving exactly as it did before.
+async fn terminate_signal() -> &'static str {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut term = match signal(SignalKind::terminate()) {
+            Ok(s) => s,
+            Err(_) => return std::future::pending().await,
+        };
+        let mut int = match signal(SignalKind::interrupt()) {
+            Ok(s) => s,
+            Err(_) => return std::future::pending().await,
+        };
+        tokio::select! {
+            _ = term.recv() => "SIGTERM",
+            _ = int.recv() => "SIGINT",
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        match tokio::signal::ctrl_c().await {
+            Ok(()) => "Ctrl-C",
+            Err(_) => std::future::pending().await,
+        }
     }
 }
 

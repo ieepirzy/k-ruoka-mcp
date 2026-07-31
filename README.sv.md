@@ -43,9 +43,24 @@ kompilerade Rust-binären.
 
 ## Användning
 
-1. Logga in en gång för hand med `uvx k-ruoka-mcp login`. Inloggningsuppgifter
-   automatiseras aldrig och programmet ser dem inte.
-1. Registrera servern hos din MCP-klient:
+### 1. Logga in en gång
+
+Antingen i en terminal med `uvx k-ruoka-mcp login`, eller be din assistent logga in dig
+när servern är registrerad. Den öppnar webbläsaren och ger dig stegen.
+
+En webbläsare öppnas på k-ruoka.fi. Klicka *Kirjaudu* och logga in som vanligt.
+Inloggningen upptäcks av sig själv och webbläsaren stängs. Inloggningsuppgifter
+automatiseras aldrig och programmet ser dem inte.
+
+Två flikar öppnas: använd den som heter *Tuotteet | K-Ruoka Verkkokauppa*. Den andra
+bevakar inloggningen och navigerar bort under dig. På en maskin utan skärm får du
+i stället ett `ssh`-kommando och en `chrome://inspect`-adress, så att du kan sköta
+inloggningen från din egen dator.
+
+Sessionen sparas i `~/.local/share/k-ruoka-mcp/profile` med rättigheterna `0700`. **Den
+innehåller en giltig inloggning, så behandla den som ett lösenord.**
+
+### 2. Registrera servern
 
 ```json
 {
@@ -58,8 +73,7 @@ kompilerade Rust-binären.
 }
 ```
 
-Sessionen sparas i `~/.local/share/k-ruoka-mcp/profile` med rättigheterna `0700`. **Den
-innehåller en giltig inloggning, så behandla den som ett lösenord.**
+`serve` är standard, så inget underkommando behövs.
 
 ## Verktyg
 
@@ -76,10 +90,17 @@ Alla korgverktyg tar ett `store_id`, eftersom en korg hör till en butik. Till e
 | `remove_from_cart` | |
 | `clear_cart` | Tömmer korgen. Kan inte ångras. |
 | `auth_status` | Om den sparade sessionen fortfarande är inloggad. |
+| `start_login` | Öppnar en webbläsare för inloggning och returnerar instruktionerna. |
+| `login_status` | `waiting`, `signedIn`, `failed` eller `notStarted`. |
+| `cancel_login` | Avbryter en pågående inloggning och stänger webbläsaren. |
 
 Vanligt flöde: `search_stores` en gång för att hitta ett butiks-id, sedan
 `search_products` för att omvandla ett namn till en EAN-kod, och därefter `add_to_cart`.
 Sök på finska: sortimentet är finskt, så `maito` hittar betydligt mer än `milk`.
+
+En assistent kan sköta inloggningen med `start_login`: den vidarebefordrar
+instruktionerna och kontrollerar `login_status` tills du är klar. Korgverktygen är pausade
+under en pågående inloggning, eftersom en profil bara rymmer en webbläsare i taget.
 
 Anrop skickas med minst **500 ms** mellanrum, så att en modell som går igenom en inköpslista
 inte skickar en skur av förfrågningar.

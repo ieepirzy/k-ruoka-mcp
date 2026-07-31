@@ -39,6 +39,9 @@ WORKDIR /home/k-ruoka
 # Pinned explicitly rather than left to the runtime candidate-path search, since this is
 # the one path Alpine's package actually installs.
 ENV K_RUOKA_CHROME=/usr/bin/chromium
+# Which port the entrypoint's relay watches for a login browser. Publish this port to the
+# Docker host's loopback to reach a login started by the start_login tool.
+ENV K_RUOKA_DEBUG_PORT=9222
 
 # tini as PID 1: Chromium is a multi-process app, and something has to reap the zombies
 # its child processes leave behind since the container has no init of its own.
