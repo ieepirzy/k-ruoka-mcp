@@ -36,6 +36,7 @@ EXPECTED_TOOLS = sorted([
     "remove_from_cart",
     "search_products",
     "search_stores",
+    "set_default_store",
     "start_login",
     "update_cart_item",
 ])
