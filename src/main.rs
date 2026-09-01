@@ -1,10 +1,13 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use k_ruoka_mcp::{alko_mcp, login, mcp, s_kaupat_mcp};
+use k_ruoka_mcp::{alko_mcp, grocery_mcp, login, mcp, s_kaupat_mcp};
 
 #[derive(Parser)]
-#[command(name = "k-ruoka-mcp", about = "MCP server for Finnish grocery catalogue and K-Ruoka cart access")]
+#[command(
+    name = "k-ruoka-mcp",
+    about = "MCP server for Finnish grocery catalogue and K-Ruoka cart access"
+)]
 struct Cli {
     /// Defaults to `serve`.
     ///
@@ -18,8 +21,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run the K-Ruoka cart MCP server over stdio.
+    /// Run the original K-Ruoka cart MCP server over stdio.
     Serve,
+    /// Run the unified K-Ruoka + S-Kaupat + Alko MCP server over stdio.
+    ServeGrocery,
     /// Run the read-only Alko catalogue MCP server over stdio.
     ServeAlko,
     /// Run the read-only S-Kaupat catalogue MCP server over stdio.
@@ -40,6 +45,7 @@ enum Command {
 async fn main() -> Result<()> {
     match Cli::parse().command.unwrap_or(Command::Serve) {
         Command::Serve => mcp::serve().await,
+        Command::ServeGrocery => grocery_mcp::serve().await,
         Command::ServeAlko => alko_mcp::serve().await,
         Command::ServeSKaupat => s_kaupat_mcp::serve().await,
         Command::Login { port, store_id } => login::run(port, &store_id).await,
