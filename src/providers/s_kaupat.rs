@@ -15,7 +15,7 @@ use chromiumoxide::Page;
 use chromiumoxide::cdp::browser_protocol::network::EventRequestWillBeSent;
 use futures::StreamExt;
 use reqwest::header::{ACCEPT, ORIGIN, REFERER, USER_AGENT};
-use reqwest::{Client, StatusCode, Url};
+use reqwest::{Client, Url};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
