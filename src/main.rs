@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use k_ruoka_mcp::{alko_mcp, login, mcp};
+use k_ruoka_mcp::{alko_mcp, login, mcp, s_kaupat_mcp};
 
 #[derive(Parser)]
 #[command(name = "k-ruoka-mcp", about = "MCP server for Finnish grocery catalogue and K-Ruoka cart access")]
@@ -22,6 +22,8 @@ enum Command {
     Serve,
     /// Run the read-only Alko catalogue MCP server over stdio.
     ServeAlko,
+    /// Run the read-only S-Kaupat catalogue MCP server over stdio.
+    ServeSKaupat,
     /// Open a visible browser and wait while you sign in to K-Plussa by hand.
     Login {
         /// Chrome remote-debugging port, for reaching the browser over an SSH
@@ -39,6 +41,7 @@ async fn main() -> Result<()> {
     match Cli::parse().command.unwrap_or(Command::Serve) {
         Command::Serve => mcp::serve().await,
         Command::ServeAlko => alko_mcp::serve().await,
+        Command::ServeSKaupat => s_kaupat_mcp::serve().await,
         Command::Login { port, store_id } => login::run(port, &store_id).await,
     }
 }
