@@ -120,13 +120,17 @@ check(
     s.tools() == ["search_s_kaupat_products", "search_s_kaupat_stores"],
     str(s.tools()),
 )
-stores = s.tool("search_s_kaupat_stores", query="Jyväskylä")
+# A city search may legitimately return physical S-group stores that do not have a food
+# web-shop assortment. Prisma Keljo is a stable Jyväskylä fixture with S-Kaupat pickup,
+# so it is a much better end-to-end assertion for the product-search contract.
+stores = s.tool("search_s_kaupat_stores", query="Prisma Keljo")
 check("S-Kaupat store lookup succeeds", "__error__" not in stores, str(stores)[:500])
 if "__error__" not in stores:
     found = stores.get("results", [])
-    check("S-Kaupat finds a Jyväskylä store", bool(found), str(stores)[:500])
-    if found:
-        store_id = found[0]["storeId"]
+    online = [store for store in found if "Prisma Keljo" in store.get("name", "")]
+    check("S-Kaupat finds Prisma Keljo", bool(online), str(stores)[:500])
+    if online:
+        store_id = online[0]["storeId"]
         products = s.tool("search_s_kaupat_products", store_id=store_id, query="maito", limit=3)
         check("S-Kaupat product lookup succeeds", "__error__" not in products, str(products)[:500])
         if "__error__" not in products:
@@ -135,7 +139,7 @@ if "__error__" not in stores:
             check("S-Kaupat respects limit", len(hits) <= 3, str(len(hits)))
             check(
                 "S-Kaupat products carry EAN/name",
-                all(p.get("ean") and p.get("name") for p in hits),
+                bool(hits) and all(p.get("ean") and p.get("name") for p in hits),
                 str(hits)[:500],
             )
 s.close()
