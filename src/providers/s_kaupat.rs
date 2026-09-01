@@ -26,6 +26,7 @@ const WEB_ORIGIN: &str = "https://www.s-kaupat.fi";
 const API_URL: &str = "https://api.s-kaupat.fi/";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const HASH_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(20);
+const STORE_TRIGGER_TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_LIMIT: u32 = 10;
 const MAX_LIMIT: u32 = 50;
 const MAX_STORE_PAGES: usize = 50;
@@ -226,7 +227,6 @@ impl SKaupatClient {
         let query = query.map(str::trim).filter(|value| !value.is_empty());
         let mut cursor: Option<String> = None;
         let mut results = Vec::new();
-        let mut total_hits = 0_u64;
 
         for _ in 0..MAX_STORE_PAGES {
             let variables = serde_json::json!({
@@ -240,15 +240,16 @@ impl SKaupatClient {
             let parsed: StoreSearchResponse = serde_json::from_value(raw)
                 .context("S-Kaupat store-search response had an unexpected shape")?;
             let page = parsed.data.search_stores;
-            total_hits = page.total_count;
+            let total_hits = page.total_count;
+            let next_cursor = page.cursor;
             results.extend(page.stores.into_iter().map(Into::into));
-            cursor = page.cursor;
-            if cursor.is_none() {
+            if next_cursor.is_none() {
                 return Ok(SKaupatStoreSearchView {
                     total_hits,
                     results,
                 });
             }
+            cursor = next_cursor;
         }
 
         bail!("S-Kaupat store search exceeded {MAX_STORE_PAGES} pages")
@@ -266,15 +267,7 @@ async fn discover_hash_on_page(page: &Page, operation: Operation) -> Result<Stri
         .with_context(|| format!("opening S-Kaupat page for {} discovery", operation.name()))?;
 
     if operation == Operation::Stores {
-        // The store page may defer RemoteStoreSearch until "show more" is requested.
-        // Clicking by visible Finnish label avoids coupling this probe to generated CSS
-        // class names. Failure is harmless: the initial page may already have emitted it.
-        page.evaluate(
-            "(() => { const b=[...document.querySelectorAll('button')].find(x => \
-             (x.textContent || '').includes('Näytä lisää')); if (b) b.click(); return !!b; })()",
-        )
-        .await
-        .ok();
+        trigger_store_search(page).await?;
     }
 
     let expected = operation.name();
@@ -290,6 +283,34 @@ async fn discover_hash_on_page(page: &Page, operation: Operation) -> Result<Stri
     tokio::time::timeout(HASH_DISCOVERY_TIMEOUT, listen)
         .await
         .with_context(|| format!("timed out discovering S-Kaupat {expected} hash"))?
+}
+
+async fn trigger_store_search(page: &Page) -> Result<()> {
+    let trigger = async {
+        loop {
+            let clicked: bool = page
+                .evaluate(
+                    "(() => { \
+                       document.getElementById('usercentrics-root')?.remove(); \
+                       const b=[...document.querySelectorAll('button')].find(x => \
+                         (x.textContent || '').includes('Näytä lisää')); \
+                       if (!b) return false; b.click(); return true; \
+                     })()",
+                )
+                .await
+                .context("probing S-Kaupat stores page")?
+                .into_value()
+                .context("S-Kaupat stores-page trigger returned a non-boolean value")?;
+            if clicked {
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    };
+
+    tokio::time::timeout(STORE_TRIGGER_TIMEOUT, trigger)
+        .await
+        .context("S-Kaupat stores page never rendered the 'Näytä lisää' trigger")?
 }
 
 fn hash_from_request_url(raw: &str, expected_operation: &str) -> Result<Option<String>> {
