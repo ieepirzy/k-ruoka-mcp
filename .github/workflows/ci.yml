@@ -102,6 +102,11 @@ jobs:
           # shared-key needs the OS too, or the three matrix jobs fight over one cache slot.
           shared-key: cross-platform-${{ matrix.os }}
       - run: cargo test --all-targets
+      - name: Exercise unified grocery MCP tool surface
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cargo build --locked
+          python3 tests/grocery_surface.py ./target/debug/k-ruoka-mcp
 
   # `rust-version` in Cargo.toml is a promise to `cargo install` users; nothing else here
   # builds on anything but the runner's latest stable, so without this the number drifts.
