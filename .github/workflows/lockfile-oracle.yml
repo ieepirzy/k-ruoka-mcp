@@ -1,0 +1,26 @@
+name: lockfile-oracle
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Regenerate Cargo.lock
+        run: cargo generate-lockfile
+
+      - name: Emit generated lockfile
+        shell: bash
+        run: |
+          echo '---BEGIN-CARGO-LOCK---'
+          cat Cargo.lock
+          echo '---END-CARGO-LOCK---'
