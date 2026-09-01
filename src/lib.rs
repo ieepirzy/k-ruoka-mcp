@@ -64,6 +64,7 @@
 
 pub mod alko_mcp;
 pub mod browser;
+pub mod grocery_http;
 pub mod grocery_mcp;
 pub mod login;
 pub mod login_flow;
