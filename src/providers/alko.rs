@@ -9,12 +9,13 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use reqwest::header::{ACCEPT, COOKIE, SET_COOKIE, USER_AGENT};
-use reqwest::{Client, Method, StatusCode};
+use reqwest::{Client, Method, StatusCode, redirect::Policy};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 const BASE_URL: &str = "https://www.alko.fi";
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const SESSION_REFRESH_AFTER: Duration = Duration::from_secs(25 * 60);
 const DEFAULT_LIMIT: u32 = 10;
 const MAX_LIMIT: u32 = 50;
@@ -71,8 +72,16 @@ impl Default for AlkoClient {
 
 impl AlkoClient {
     pub fn new() -> Self {
+        // Do not follow the NextAuth credentials callback redirect: the guest session
+        // token is set on that response, and this client deliberately manages the tiny
+        // cookie jar itself rather than enabling reqwest's general cookie store.
+        let http = Client::builder()
+            .timeout(REQUEST_TIMEOUT)
+            .redirect(Policy::none())
+            .build()
+            .expect("static reqwest client configuration should be valid");
         Self {
-            http: Client::new(),
+            http,
             session: Mutex::new(SessionState::default()),
         }
     }
@@ -346,5 +355,56 @@ impl From<AlkoStore> for AlkoStoreView {
             address: store.address,
             postal_code: store.postal_code,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reqwest::header::HeaderValue;
+
+    #[test]
+    fn absorbs_multiple_set_cookie_headers() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.append(
+            SET_COOKIE,
+            HeaderValue::from_static("next-auth.csrf-token=abc; Path=/; HttpOnly"),
+        );
+        headers.append(
+            SET_COOKIE,
+            HeaderValue::from_static(
+                "__Secure-next-auth.session-token=secret; Path=/; Secure; HttpOnly",
+            ),
+        );
+
+        let mut state = SessionState::default();
+        state.absorb_set_cookies(&headers).unwrap();
+
+        assert_eq!(state.cookies.get("next-auth.csrf-token").unwrap(), "abc");
+        assert_eq!(
+            state
+                .cookies
+                .get("__Secure-next-auth.session-token")
+                .unwrap(),
+            "secret"
+        );
+    }
+
+    #[test]
+    fn product_view_calculates_price_per_litre() {
+        let view: AlkoProductView = AlkoProduct {
+            id: "123456".to_string(),
+            name: "Test product".to_string(),
+            price: Some(15.0),
+            abv: Some(12.5),
+            volume: Some(0.75),
+            country_name: Some("Testland".to_string()),
+            product_group_name: vec!["Wine".to_string()],
+        }
+        .into();
+
+        assert_eq!(view.price_per_litre, Some(20.0));
+        assert_eq!(view.sku, "123456");
+        assert_eq!(view.category.as_deref(), Some("Wine"));
     }
 }
