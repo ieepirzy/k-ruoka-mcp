@@ -1,0 +1,24 @@
+name: provider-smoke
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  live-read-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.8.2
+
+      - name: Build provider validation modes
+        run: cargo build --locked
+
+      - name: Exercise live Alko and S-Kaupat catalogue paths
+        run: python3 tests/provider_e2e.py ./target/debug/k-ruoka-mcp
