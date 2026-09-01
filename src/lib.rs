@@ -68,4 +68,5 @@ pub mod login;
 pub mod login_flow;
 pub mod mcp;
 pub mod providers;
+pub mod s_kaupat_mcp;
 pub mod types;
