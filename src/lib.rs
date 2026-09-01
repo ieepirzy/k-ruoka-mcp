@@ -62,8 +62,10 @@
 //! covers the development setup; the module docs below are for that audience, not for
 //! programming against this crate as a dependency.
 
+pub mod alko_mcp;
 pub mod browser;
 pub mod login;
 pub mod login_flow;
 pub mod mcp;
+pub mod providers;
 pub mod types;
