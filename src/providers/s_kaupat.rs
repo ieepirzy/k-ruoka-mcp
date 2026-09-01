@@ -30,8 +30,7 @@ const STORE_TRIGGER_TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_LIMIT: u32 = 10;
 const MAX_LIMIT: u32 = 50;
 const MAX_STORE_PAGES: usize = 50;
-const USER_AGENT_VALUE: &str =
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36";
+const USER_AGENT_VALUE: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Operation {
@@ -267,7 +266,11 @@ async fn discover_hash_on_page(page: &Page, operation: Operation) -> Result<Stri
         .with_context(|| format!("opening S-Kaupat page for {} discovery", operation.name()))?;
 
     if operation == Operation::Stores {
-        trigger_store_search(page).await?;
+        // `goto` returning does not mean the route has finished replacing its JS execution
+        // context. The old evaluate-based probe raced that transition on headless Chrome.
+        // Wait for navigation, then use Chromiumoxide's DOM primitives for the actual click.
+        let _ = tokio::time::timeout(STORE_TRIGGER_TIMEOUT, page.wait_for_navigation()).await;
+        trigger_store_search(page).await.ok();
     }
 
     let expected = operation.name();
@@ -277,7 +280,9 @@ async fn discover_hash_on_page(page: &Page, operation: Operation) -> Result<Stri
                 return Ok(hash);
             }
         }
-        Err(anyhow!("S-Kaupat network event stream ended during hash discovery"))
+        Err(anyhow!(
+            "S-Kaupat network event stream ended during hash discovery"
+        ))
     };
 
     tokio::time::timeout(HASH_DISCOVERY_TIMEOUT, listen)
@@ -286,29 +291,30 @@ async fn discover_hash_on_page(page: &Page, operation: Operation) -> Result<Stri
 }
 
 async fn trigger_store_search(page: &Page) -> Result<()> {
-    let trigger = async {
+    // The consent overlay can cover the button. Removing it is an optimisation only; if
+    // the page is still settling and this evaluate fails, the XPath loop below remains the
+    // source of truth and we simply keep trying until its own deadline.
+    page.evaluate("document.getElementById('usercentrics-root')?.remove(); true")
+        .await
+        .ok();
+
+    let find_and_click = async {
         loop {
-            let clicked: bool = page
-                .evaluate(
-                    "(() => { \
-                       document.getElementById('usercentrics-root')?.remove(); \
-                       const b=[...document.querySelectorAll('button')].find(x => \
-                         (x.textContent || '').includes('Näytä lisää')); \
-                       if (!b) return false; b.click(); return true; \
-                     })()",
-                )
+            if let Ok(button) = page
+                .find_xpath("//button[contains(normalize-space(.), 'Näytä lisää')]")
                 .await
-                .context("probing S-Kaupat stores page")?
-                .into_value()
-                .context("S-Kaupat stores-page trigger returned a non-boolean value")?;
-            if clicked {
+            {
+                button
+                    .click()
+                    .await
+                    .context("clicking S-Kaupat 'Näytä lisää' button")?;
                 return Ok(());
             }
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
     };
 
-    tokio::time::timeout(STORE_TRIGGER_TIMEOUT, trigger)
+    tokio::time::timeout(STORE_TRIGGER_TIMEOUT, find_and_click)
         .await
         .context("S-Kaupat stores page never rendered the 'Näytä lisää' trigger")?
 }
@@ -474,7 +480,11 @@ impl From<ProductListItem> for SKaupatProductView {
             comparison_price: product.pricing.comparison_price,
             comparison_unit: product.pricing.comparison_unit,
             brand: product.brand_name,
-            category: product.hierarchy_path.into_iter().next().map(|item| item.name),
+            category: product
+                .hierarchy_path
+                .into_iter()
+                .next()
+                .map(|item| item.name),
             image_url,
         }
     }
