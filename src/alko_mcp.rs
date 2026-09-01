@@ -9,7 +9,9 @@ use std::sync::Arc;
 use anyhow::Result;
 use rmcp::handler::server::wrapper::{Json, Parameters};
 use rmcp::model::{ContentBlock, Implementation, IntoContents, ServerCapabilities, ServerInfo};
-use rmcp::{ServerHandler, ServiceExt, schemars, tool, tool_handler, tool_router, transport::stdio};
+use rmcp::{
+    ServerHandler, ServiceExt, schemars, tool, tool_handler, tool_router, transport::stdio,
+};
 use serde::Deserialize;
 
 use crate::providers::alko::{AlkoClient, AlkoProductSearchView, AlkoStoreView};

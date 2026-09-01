@@ -14,8 +14,8 @@ use rmcp::transport::streamable_http_server::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::browser::{LaunchMode, Session, session::default_profile_dir};
 use crate::browser::session::default_store_path;
+use crate::browser::{LaunchMode, Session, session::default_profile_dir};
 use crate::grocery_mcp::GroceryServer;
 use crate::login_flow::ChildLogin;
 

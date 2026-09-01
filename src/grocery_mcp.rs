@@ -11,9 +11,7 @@ use anyhow::Result;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::{Json, Parameters};
 use rmcp::model::{ContentBlock, Implementation, IntoContents, ServerCapabilities, ServerInfo};
-use rmcp::{
-    ServerHandler, ServiceExt, tool, tool_handler, tool_router, transport::stdio,
-};
+use rmcp::{ServerHandler, ServiceExt, tool, tool_handler, tool_router, transport::stdio};
 
 use crate::alko_mcp::{SearchAlkoProductsArg, SearchAlkoStoresArg};
 use crate::browser::basket::Cart;
@@ -23,13 +21,11 @@ use crate::browser::session::{ApiError, default_profile_dir, default_store_path}
 use crate::browser::{KrApi, LaunchMode, Session};
 use crate::login_flow::{ChildLogin, LoginFlow, LoginProgress};
 use crate::mcp::tools::{
-    AddArg, AuthArg, AuthStatus, DefaultStoreStatus, RemoveArg, SearchProductsArg,
-    SearchStoresArg, SetDefaultStoreArg, StartLoginArg, StoreArg, UpdateArg,
+    AddArg, AuthArg, AuthStatus, DefaultStoreStatus, RemoveArg, SearchProductsArg, SearchStoresArg,
+    SetDefaultStoreArg, StartLoginArg, StoreArg, UpdateArg,
 };
 use crate::providers::alko::{AlkoClient, AlkoProductSearchView, AlkoStoreView};
-use crate::providers::s_kaupat::{
-    SKaupatClient, SKaupatProductSearchView, SKaupatStoreSearchView,
-};
+use crate::providers::s_kaupat::{SKaupatClient, SKaupatProductSearchView, SKaupatStoreSearchView};
 use crate::s_kaupat_mcp::{SearchSKaupatProductsArg, SearchSKaupatStoresArg};
 use crate::types::{
     CartView, DEFAULT_UNIT, PersonalOffersView, ProductSearchView, StoreSearchView,
@@ -236,7 +232,11 @@ impl GroceryServer {
     }
 
     #[tool(
-        annotations(title = "Read K-Ruoka cart", read_only_hint = true, idempotent_hint = true),
+        annotations(
+            title = "Read K-Ruoka cart",
+            read_only_hint = true,
+            idempotent_hint = true
+        ),
         description = "Read the current K-Ruoka cart. This is also how to get basket itemId \
                        values for update_cart_item and remove_from_cart."
     )]
@@ -339,7 +339,11 @@ impl GroceryServer {
     }
 
     #[tool(
-        annotations(title = "Check K-Plussa sign-in", read_only_hint = true, idempotent_hint = true),
+        annotations(
+            title = "Check K-Plussa sign-in",
+            read_only_hint = true,
+            idempotent_hint = true
+        ),
         description = "Check whether the stored K-Plussa browser session is signed in."
     )]
     async fn auth_status(
@@ -377,7 +381,11 @@ impl GroceryServer {
     }
 
     #[tool(
-        annotations(title = "Start K-Plussa login", read_only_hint = false, idempotent_hint = true),
+        annotations(
+            title = "Start K-Plussa login",
+            read_only_hint = false,
+            idempotent_hint = true
+        ),
         description = "Open the K-Plussa login flow. Relay the returned instructions to the \
                        user verbatim, then poll login_status."
     )]
@@ -393,15 +401,15 @@ impl GroceryServer {
     }
 
     #[tool(
-        annotations(title = "K-Plussa login status", read_only_hint = true, idempotent_hint = true),
+        annotations(
+            title = "K-Plussa login status",
+            read_only_hint = true,
+            idempotent_hint = true
+        ),
         description = "Return the status of a login started by start_login."
     )]
     async fn login_status(&self) -> Result<Json<LoginProgress>, GroceryToolFailure> {
-        self.login
-            .status()
-            .await
-            .map(Json)
-            .map_err(k_tool_failure)
+        self.login.status().await.map(Json).map_err(k_tool_failure)
     }
 
     #[tool(
@@ -409,11 +417,7 @@ impl GroceryServer {
         description = "Cancel an in-progress K-Plussa login and restore normal browser access."
     )]
     async fn cancel_login(&self) -> Result<Json<LoginProgress>, GroceryToolFailure> {
-        self.login
-            .cancel()
-            .await
-            .map(Json)
-            .map_err(k_tool_failure)
+        self.login.cancel().await.map(Json).map_err(k_tool_failure)
     }
 
     #[tool(

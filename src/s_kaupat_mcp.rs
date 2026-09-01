@@ -9,13 +9,13 @@ use std::sync::Arc;
 use anyhow::Result;
 use rmcp::handler::server::wrapper::{Json, Parameters};
 use rmcp::model::{ContentBlock, Implementation, IntoContents, ServerCapabilities, ServerInfo};
-use rmcp::{ServerHandler, ServiceExt, schemars, tool, tool_handler, tool_router, transport::stdio};
+use rmcp::{
+    ServerHandler, ServiceExt, schemars, tool, tool_handler, tool_router, transport::stdio,
+};
 use serde::Deserialize;
 
 use crate::browser::{LaunchMode, Session, session::default_profile_dir};
-use crate::providers::s_kaupat::{
-    SKaupatClient, SKaupatProductSearchView, SKaupatStoreSearchView,
-};
+use crate::providers::s_kaupat::{SKaupatClient, SKaupatProductSearchView, SKaupatStoreSearchView};
 
 const LIMIT_DESC: &str = "How many results to return. Defaults to 10, capped at 50.";
 
@@ -123,7 +123,9 @@ impl ServerHandler for SKaupatServer {
 pub async fn serve() -> Result<()> {
     let profile_dir = default_profile_dir()?;
     let browser = Arc::new(Session::new(profile_dir, LaunchMode::Headless)?);
-    let service = SKaupatServer::new(Arc::clone(&browser)).serve(stdio()).await?;
+    let service = SKaupatServer::new(Arc::clone(&browser))
+        .serve(stdio())
+        .await?;
     let outcome = service.waiting().await;
     browser.signal_shutdown();
     browser.close().await.ok();

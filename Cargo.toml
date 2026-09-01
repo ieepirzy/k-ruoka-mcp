@@ -59,18 +59,21 @@ axum = "0.8"
 chromiumoxide = "0.9"
 clap = { version = "4.6.4", features = ["derive"] }
 futures = "0.3.33"
-reqwest = { version = "0.13.4", default-features = false, features = [
-  "form",
-  "json",
-  "rustls"
-] }
-rmcp = { version = "3", features = [
-  "macros",
-  "schemars",
-  "server",
-  "transport-io",
-  "transport-streamable-http-server"
-] }
+reqwest = {
+  version = "0.13.4",
+  default-features = false,
+  features = ["form", "json", "rustls"]
+}
+rmcp = {
+  version = "3",
+  features = [
+    "macros",
+    "schemars",
+    "server",
+    "transport-io",
+    "transport-streamable-http-server"
+  ]
+}
 schemars = "1.2.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
@@ -83,7 +86,7 @@ rmcp = { version = "3", features = ["client"] }
 
 # Only for signalling a login child's whole process group: Chrome is a grandchild, so
 # killing just the child leaves it holding the profile lock.
-[target.'cfg(unix)'.dependencies]
+[target."cfg(unix)".dependencies]
 libc = "0.2"
 
 # Drops the symbol table only (release has no DWARF anyway), at the cost of function

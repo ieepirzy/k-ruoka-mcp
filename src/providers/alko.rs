@@ -19,8 +19,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const SESSION_REFRESH_AFTER: Duration = Duration::from_secs(25 * 60);
 const DEFAULT_LIMIT: u32 = 10;
 const MAX_LIMIT: u32 = 50;
-const USER_AGENT_VALUE: &str =
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36";
+const USER_AGENT_VALUE: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36";
 
 #[derive(Default)]
 struct SessionState {
@@ -45,7 +44,9 @@ impl SessionState {
 
     fn absorb_set_cookies(&mut self, headers: &reqwest::header::HeaderMap) -> Result<()> {
         for raw in headers.get_all(SET_COOKIE).iter() {
-            let raw = raw.to_str().context("Alko returned a non-UTF8 Set-Cookie header")?;
+            let raw = raw
+                .to_str()
+                .context("Alko returned a non-UTF8 Set-Cookie header")?;
             let Some(name_value) = raw.split(';').next() else {
                 continue;
             };
@@ -179,8 +180,10 @@ impl AlkoClient {
                 .await
                 .with_context(|| format!("Alko request failed: {method} {path}"))?;
 
-            if matches!(response.status(), StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN)
-                && attempt == 0
+            if matches!(
+                response.status(),
+                StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+            ) && attempt == 0
             {
                 self.invalidate_session().await;
                 continue;
