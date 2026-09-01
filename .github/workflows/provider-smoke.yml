@@ -1,7 +1,12 @@
 name: provider-smoke
 
 on:
-  pull_request:
+  workflow_dispatch:
+  schedule:
+    # External provider contracts are not part of hermetic CI. Probe them weekly so a
+    # K/S/Alko frontend deployment can be noticed without making every PR depend on the
+    # public internet. GitHub schedules in UTC; the exact wall-clock hour is unimportant.
+    - cron: "17 5 * * 1"
 
 permissions:
   contents: read
@@ -15,7 +20,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.8.2
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Build provider validation modes
         run: cargo build --locked
