@@ -141,12 +141,21 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    # A job-level `if` cannot read secrets, so each step checks. Forks without a
+    # SonarCloud token (and PRs from forks, which get no secrets) skip instead of failing.
+    env:
+      HAS_SONAR_TOKEN: ${{ secrets.SONAR_TOKEN != '' }}
     steps:
+      - name: No SONAR_TOKEN, skipping analysis
+        if: env.HAS_SONAR_TOKEN != 'true'
+        run: echo "::notice::SONAR_TOKEN is not set for this repository; SonarQube skipped"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: env.HAS_SONAR_TOKEN == 'true'
         with:
           fetch-depth: 0 # shallow clones reduce the relevancy of blame-based analysis
           persist-credentials: false
       - name: SonarQube Scan
+        if: env.HAS_SONAR_TOKEN == 'true'
         uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995 # v8.1.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
