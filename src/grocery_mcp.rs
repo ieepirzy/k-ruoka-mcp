@@ -11,7 +11,7 @@ use anyhow::Result;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::{Json, Parameters};
 use rmcp::model::{ContentBlock, Implementation, IntoContents, ServerCapabilities, ServerInfo};
-use rmcp::{ServerHandler, ServiceExt, tool, tool_handler, tool_router, transport::stdio};
+use rmcp::{ServerHandler, tool, tool_handler, tool_router};
 
 use crate::alko_mcp::{SearchAlkoProductsArg, SearchAlkoStoresArg};
 use crate::browser::basket::Cart;
@@ -172,7 +172,9 @@ impl GroceryServer {
             read_only_hint = true,
             idempotent_hint = true
         ),
-        description = "Find K-Ruoka stores by place or store name and return their store ids."
+        description = "Find K-Ruoka stores by name or place, and get the `store_id` every \
+                       other K-Ruoka tool needs. Read-only. Check `isWebStore`: a store \
+                       without an online cart cannot be used by the cart tools."
     )]
     async fn search_stores(
         &self,
@@ -344,7 +346,10 @@ impl GroceryServer {
             read_only_hint = true,
             idempotent_hint = true
         ),
-        description = "Check whether the stored K-Plussa browser session is signed in."
+        description = "Check whether the stored K-Plussa session is still logged in. Cheap. \
+                       Worth calling first if a cart operation behaves unexpectedly, because \
+                       an anonymous session still returns a valid -- but wrong, and not the \
+                       account's -- cart rather than failing."
     )]
     async fn auth_status(
         &self,
@@ -386,8 +391,14 @@ impl GroceryServer {
             read_only_hint = false,
             idempotent_hint = true
         ),
-        description = "Open the K-Plussa login flow. Relay the returned instructions to the \
-                       user verbatim, then poll login_status."
+        description = "Open a browser for the user to sign in to K-Plussa by hand, and \
+                       return the instructions to give them. Use this when auth_status says \
+                       the session is not signed in. Relay the returned `instructions` \
+                       VERBATIM: they differ between a desktop and a headless host, and \
+                       only the running server knows which it is. Then poll login_status. \
+                       This never sees the user's credentials, and it takes over the \
+                       browser, so the K-Ruoka and S-Kaupat tools will not work until the \
+                       login finishes or is cancelled."
     )]
     async fn start_login(
         &self,
@@ -406,7 +417,10 @@ impl GroceryServer {
             read_only_hint = true,
             idempotent_hint = true
         ),
-        description = "Return the status of a login started by start_login."
+        description = "How the login started by start_login is going: `waiting`, \
+                       `signedIn`, `failed`, or `notStarted`. Poll this every 10 to 20 \
+                       seconds while the user signs in; they may need a couple of minutes \
+                       for a password manager and MFA."
     )]
     async fn login_status(&self) -> Result<Json<LoginProgress>, GroceryToolFailure> {
         self.login.status().await.map(Json).map_err(k_tool_failure)
@@ -414,7 +428,9 @@ impl GroceryServer {
 
     #[tool(
         annotations(title = "Cancel K-Plussa login", idempotent_hint = true),
-        description = "Cancel an in-progress K-Plussa login and restore normal browser access."
+        description = "Give up on a login in progress and close its browser, so the K-Ruoka \
+                       and S-Kaupat tools work again. Any previously stored session is left \
+                       untouched."
     )]
     async fn cancel_login(&self) -> Result<Json<LoginProgress>, GroceryToolFailure> {
         self.login.cancel().await.map(Json).map_err(k_tool_failure)
@@ -516,18 +532,14 @@ impl ServerHandler for GroceryServer {
 }
 
 pub async fn serve() -> Result<()> {
-    let profile_dir = default_profile_dir()?;
-    let store_path = default_store_path(&profile_dir);
-    let session = Arc::new(Session::new(profile_dir, LaunchMode::Headless)?);
-    let login = Arc::new(ChildLogin::new(Arc::clone(&session)));
-    let handler = GroceryServer::from_session(Arc::clone(&session), Arc::clone(&login), store_path);
-
-    let service = handler.serve(stdio()).await?;
-    let outcome = service.waiting().await;
-
-    session.signal_shutdown();
-    login.shutdown().await;
-    session.close().await.ok();
-    outcome?;
-    Ok(())
+    crate::mcp::serve_stdio(|| {
+        let profile_dir = default_profile_dir()?;
+        let store_path = default_store_path(&profile_dir);
+        let session = Arc::new(Session::new(profile_dir, LaunchMode::Headless)?);
+        let login = Arc::new(ChildLogin::new(Arc::clone(&session)));
+        let handler =
+            GroceryServer::from_session(Arc::clone(&session), Arc::clone(&login), store_path);
+        Ok((session, Some(login), handler))
+    })
+    .await
 }

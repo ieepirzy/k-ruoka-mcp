@@ -48,11 +48,16 @@ fn scratch_profile(name: &str) -> std::path::PathBuf {
 /// because the handler was only installed after the handshake completed.
 #[cfg(unix)]
 fn serve_and_signal(signal: &str, handshake: bool) -> (Option<i32>, Duration, String) {
-    let profile = scratch_profile(&format!("{signal}-{handshake}"));
+    mode_and_signal("serve", signal, handshake)
+}
+
+#[cfg(unix)]
+fn mode_and_signal(mode: &str, signal: &str, handshake: bool) -> (Option<i32>, Duration, String) {
+    let profile = scratch_profile(&format!("{mode}-{signal}-{handshake}"));
     let _ = std::fs::remove_dir_all(&profile);
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_k-ruoka-mcp"))
-        .arg("serve")
+        .arg(mode)
         .env("K_RUOKA_PROFILE", &profile)
         // Which phase the shutdown reached is the only evidence available when this
         // fails on a runner rather than here.
@@ -173,6 +178,23 @@ fn sigterm_exits_cleanly_rather_than_being_killed() {
             elapsed < Duration::from_secs(5),
             "handshake={handshake}: shutdown took {elapsed:?}; it should be prompt"
         );
+    }
+}
+
+/// Every browser-backed stdio mode holds a profile, so each needs the same graceful exit
+/// (`serve-grocery` and `serve-s-kaupat` once exited on SIGTERM without closing Chrome).
+#[cfg(unix)]
+#[test]
+fn every_browser_backed_stdio_mode_exits_cleanly_on_sigterm() {
+    for mode in ["serve-grocery", "serve-s-kaupat"] {
+        for handshake in [true, false] {
+            let (code, _, _) = mode_and_signal(mode, "TERM", handshake);
+            assert_eq!(
+                code,
+                Some(0),
+                "{mode} handshake={handshake}: killed by SIGTERM instead of closing the browser"
+            );
+        }
     }
 }
 

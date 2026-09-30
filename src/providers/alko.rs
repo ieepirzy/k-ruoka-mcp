@@ -14,6 +14,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
+use crate::browser::session::RateLimiter;
+
 const BASE_URL: &str = "https://www.alko.fi";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const SESSION_REFRESH_AFTER: Duration = Duration::from_secs(25 * 60);
@@ -63,6 +65,7 @@ impl SessionState {
 pub struct AlkoClient {
     http: Client,
     session: Mutex<SessionState>,
+    limiter: RateLimiter,
 }
 
 impl Default for AlkoClient {
@@ -84,6 +87,7 @@ impl AlkoClient {
         Self {
             http,
             session: Mutex::new(SessionState::default()),
+            limiter: RateLimiter::from_env(),
         }
     }
 
@@ -91,6 +95,7 @@ impl AlkoClient {
         state.cookies.clear();
         state.created_at = None;
 
+        self.limiter.acquire().await;
         let csrf_response = self
             .http
             .get(format!("{BASE_URL}/api/auth/csrf"))
@@ -109,6 +114,7 @@ impl AlkoClient {
             .await
             .context("Alko CSRF response had an unexpected shape")?;
 
+        self.limiter.acquire().await;
         let login_response = self
             .http
             .post(format!("{BASE_URL}/api/auth/callback/credentials"))
@@ -175,6 +181,7 @@ impl AlkoClient {
                 request = request.json(body);
             }
 
+            self.limiter.acquire().await;
             let response = request
                 .send()
                 .await

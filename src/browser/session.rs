@@ -226,13 +226,19 @@ const DEFAULT_MIN_REQUEST_INTERVAL: Duration = Duration::from_millis(500);
 ///
 /// The lock is held across the sleep on purpose: that is what serialises the queue
 /// instead of letting everyone wake together.
-struct RateLimiter {
+pub(crate) struct RateLimiter {
     min_interval: Duration,
     /// When the next request may go out. `None` until the first one.
     next_allowed: Mutex<Option<Instant>>,
 }
 
 impl RateLimiter {
+    /// The configured spacing (`K_RUOKA_MIN_REQUEST_INTERVAL_MS`). Each site gets its own
+    /// limiter: the point is how traffic to one site looks, not a global budget.
+    pub(crate) fn from_env() -> Self {
+        Self::new(min_request_interval())
+    }
+
     fn new(min_interval: Duration) -> Self {
         Self {
             min_interval,
@@ -241,7 +247,7 @@ impl RateLimiter {
     }
 
     /// Returns once the caller may make its request.
-    async fn acquire(&self) {
+    pub(crate) async fn acquire(&self) {
         if self.min_interval.is_zero() {
             return;
         }

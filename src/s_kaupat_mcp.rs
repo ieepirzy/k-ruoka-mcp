@@ -9,9 +9,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use rmcp::handler::server::wrapper::{Json, Parameters};
 use rmcp::model::{ContentBlock, Implementation, IntoContents, ServerCapabilities, ServerInfo};
-use rmcp::{
-    ServerHandler, ServiceExt, schemars, tool, tool_handler, tool_router, transport::stdio,
-};
+use rmcp::{ServerHandler, schemars, tool, tool_handler, tool_router};
 use serde::Deserialize;
 
 use crate::browser::{LaunchMode, Session, session::default_profile_dir};
@@ -121,14 +119,23 @@ impl ServerHandler for SKaupatServer {
 }
 
 pub async fn serve() -> Result<()> {
-    let profile_dir = default_profile_dir()?;
-    let browser = Arc::new(Session::new(profile_dir, LaunchMode::Headless)?);
-    let service = SKaupatServer::new(Arc::clone(&browser))
-        .serve(stdio())
-        .await?;
-    let outcome = service.waiting().await;
-    browser.signal_shutdown();
-    browser.close().await.ok();
-    outcome?;
-    Ok(())
+    crate::mcp::serve_stdio(|| {
+        let browser = Arc::new(Session::new(scratch_profile_dir()?, LaunchMode::Headless)?);
+        let handler = SKaupatServer::new(Arc::clone(&browser));
+        Ok((browser, None, handler))
+    })
+    .await
+}
+
+/// Hash discovery needs a browser, but not the signed-in one: a second Chrome on the
+/// K-Ruoka profile would fight `serve` for its lock. `K_RUOKA_PROFILE` still overrides.
+fn scratch_profile_dir() -> Result<std::path::PathBuf> {
+    if std::env::var_os("K_RUOKA_PROFILE").is_some() {
+        return default_profile_dir();
+    }
+    let signed_in = default_profile_dir()?;
+    Ok(signed_in
+        .parent()
+        .unwrap_or(&signed_in)
+        .join("s-kaupat-scratch-profile"))
 }

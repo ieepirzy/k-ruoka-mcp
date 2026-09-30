@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::browser::Session;
+use crate::browser::session::RateLimiter;
 
 const WEB_ORIGIN: &str = "https://www.s-kaupat.fi";
 const API_URL: &str = "https://api.s-kaupat.fi/";
@@ -29,7 +30,9 @@ const HASH_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(20);
 const STORE_TRIGGER_TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_LIMIT: u32 = 10;
 const MAX_LIMIT: u32 = 50;
-const MAX_STORE_PAGES: usize = 50;
+// With no query this walks the national store list, spaced by the limiter; past this
+// many pages the caller gets what was found plus `totalHits`, not a longer burst.
+const MAX_STORE_PAGES: usize = 10;
 const USER_AGENT_VALUE: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -68,6 +71,7 @@ struct PersistedQuery {
 
 pub struct SKaupatClient {
     http: Client,
+    limiter: RateLimiter,
     browser: Arc<Session>,
     hashes: Mutex<HashMap<Operation, String>>,
     discovery_gate: Mutex<()>,
@@ -81,6 +85,7 @@ impl SKaupatClient {
             .expect("static reqwest client configuration should be valid");
         Self {
             http,
+            limiter: RateLimiter::from_env(),
             browser,
             hashes: Mutex::new(HashMap::new()),
             discovery_gate: Mutex::new(()),
@@ -136,6 +141,7 @@ impl SKaupatClient {
             .append_pair("variables", &variables.to_string())
             .append_pair("extensions", &extensions.to_string());
 
+        self.limiter.acquire().await;
         let response = self
             .http
             .get(url)
@@ -226,6 +232,7 @@ impl SKaupatClient {
         let query = query.map(str::trim).filter(|value| !value.is_empty());
         let mut cursor: Option<String> = None;
         let mut results = Vec::new();
+        let mut total_hits = 0;
 
         for _ in 0..MAX_STORE_PAGES {
             let variables = serde_json::json!({
@@ -239,7 +246,7 @@ impl SKaupatClient {
             let parsed: StoreSearchResponse = serde_json::from_value(raw)
                 .context("S-Kaupat store-search response had an unexpected shape")?;
             let page = parsed.data.search_stores;
-            let total_hits = page.total_count;
+            total_hits = page.total_count;
             let next_cursor = page.cursor;
             results.extend(page.stores.into_iter().map(Into::into));
             if next_cursor.is_none() {
@@ -251,7 +258,10 @@ impl SKaupatClient {
             cursor = next_cursor;
         }
 
-        bail!("S-Kaupat store search exceeded {MAX_STORE_PAGES} pages")
+        Ok(SKaupatStoreSearchView {
+            total_hits,
+            results,
+        })
     }
 }
 

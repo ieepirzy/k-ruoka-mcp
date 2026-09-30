@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use rmcp::{ServiceExt, transport::stdio};
+use rmcp::{ServerHandler, ServiceExt, transport::stdio};
 #[cfg(unix)]
 use tokio::signal::unix::{Signal, SignalKind, signal};
 
@@ -58,6 +58,37 @@ fn idle_check_interval(timeout: Duration) -> Duration {
 }
 
 pub async fn serve() -> Result<()> {
+    serve_stdio(|| {
+        // At most one browser generation at a time. A profile dir supports a single
+        // Chrome instance, and relaunching per tool call would be slow and would
+        // fight over the profile lock. The browser is launched lazily on the first
+        // tool call, so `serve` starts instantly and a client that only lists tools
+        // never pays for it.
+        let profile_dir = default_profile_dir()?;
+        let store_path = default_store_path(&profile_dir);
+        let session = Arc::new(Session::new(profile_dir, LaunchMode::Headless)?);
+
+        // The login tools drive the `login` subcommand as a child process, which needs the
+        // session itself (to hand over the profile), not just the API seam.
+        let login = Arc::new(ChildLogin::new(Arc::clone(&session)));
+        let handler = CartServer::with_login(Arc::clone(&session) as Arc<dyn KrApi>, login.clone())
+            .with_default_store_path(store_path);
+        Ok((session, Some(login), handler))
+    })
+    .await
+}
+
+/// Serves `handler` over stdio with the browser shutdown every browser-backed mode needs:
+/// SIGTERM is how MCP clients stop a stdio server, and exiting on it without closing
+/// Chrome loses the login (unflushed cookies, a held profile lock).
+///
+/// `build` runs after the signal handlers are installed, so a signal during startup is
+/// handled too.
+pub async fn serve_stdio<H, F>(build: F) -> Result<()>
+where
+    H: ServerHandler,
+    F: FnOnce() -> Result<(Arc<Session>, Option<Arc<ChildLogin>>, H)>,
+{
     // Before anything else, including startup. Tokio installs the OS handler inside
     // `signal()` rather than on the first poll, so registering here is what shrinks the
     // window in which a SIGTERM is fatal down to almost nothing. Startup is cheap now
@@ -66,21 +97,7 @@ pub async fn serve() -> Result<()> {
     let mut terminate = TerminateSignals::install();
     trace_shutdown!("signals installed");
 
-    // At most one browser generation at a time. A profile dir supports a single
-    // Chrome instance, and relaunching per tool call would be slow and would
-    // fight over the profile lock. The browser is launched lazily on the first
-    // tool call, so `serve` starts instantly and a client that only lists tools
-    // never pays for it.
-    let profile_dir = default_profile_dir()?;
-    let store_path = default_store_path(&profile_dir);
-    let session = Arc::new(Session::new(profile_dir, LaunchMode::Headless)?);
-
-    // The login tools drive the `login` subcommand as a child process, which needs the
-    // session itself (to hand over the profile), not just the API seam.
-    let login = Arc::new(ChildLogin::new(Arc::clone(&session)));
-    let login_for_shutdown = Arc::clone(&login);
-    let handler = CartServer::with_login(Arc::clone(&session) as Arc<dyn KrApi>, login)
-        .with_default_store_path(store_path);
+    let (session, login_for_shutdown, handler) = build()?;
     let idle_watcher = idle_timeout().map(|timeout| {
         let session = Arc::clone(&session);
         tokio::spawn(async move {
@@ -132,7 +149,9 @@ pub async fn serve() -> Result<()> {
     // owns. Signalling first is what lets that poll release it.
     session.signal_shutdown();
     trace_shutdown!("stopping any login, then closing the browser");
-    login_for_shutdown.shutdown().await;
+    if let Some(login) = &login_for_shutdown {
+        login.shutdown().await;
+    }
     session.close().await.ok();
 
     if let Some(watcher) = idle_watcher {
