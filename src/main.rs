@@ -1,10 +1,13 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use k_ruoka_mcp::{login, mcp};
+use k_ruoka_mcp::{alko_mcp, grocery_http, grocery_mcp, login, mcp, s_kaupat_mcp};
 
 #[derive(Parser)]
-#[command(name = "k-ruoka-mcp", about = "MCP server for a K-Ruoka shopping cart")]
+#[command(
+    name = "k-ruoka-mcp",
+    about = "MCP server for Finnish grocery catalogue and K-Ruoka cart access"
+)]
 struct Cli {
     /// Defaults to `serve`.
     ///
@@ -18,8 +21,25 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run the MCP server over stdio.
+    /// Run the original K-Ruoka cart MCP server over stdio.
     Serve,
+    /// Run the unified K-Ruoka + S-Kaupat + Alko MCP server over stdio.
+    ServeGrocery,
+    /// Run the unified grocery MCP over Streamable HTTP for Origo/deployments.
+    ServeHttp {
+        /// Socket address to bind. Defaults to loopback so an Origo sidecar can be the edge.
+        #[arg(long, default_value = "127.0.0.1:8000")]
+        bind: String,
+        /// A `Host` header to accept besides loopback, e.g. the service name other
+        /// containers reach it by (`k-ruoka` or `k-ruoka:8000`). Repeatable. A non-loopback
+        /// bind also needs `K_RUOKA_HTTP_TOKEN` set.
+        #[arg(long = "allowed-host")]
+        allowed_hosts: Vec<String>,
+    },
+    /// Run the read-only Alko catalogue MCP server over stdio.
+    ServeAlko,
+    /// Run the read-only S-Kaupat catalogue MCP server over stdio.
+    ServeSKaupat,
     /// Open a visible browser and wait while you sign in to K-Plussa by hand.
     Login {
         /// Chrome remote-debugging port, for reaching the browser over an SSH
@@ -36,6 +56,13 @@ enum Command {
 async fn main() -> Result<()> {
     match Cli::parse().command.unwrap_or(Command::Serve) {
         Command::Serve => mcp::serve().await,
+        Command::ServeGrocery => grocery_mcp::serve().await,
+        Command::ServeHttp {
+            bind,
+            allowed_hosts,
+        } => grocery_http::serve(&bind, &allowed_hosts).await,
+        Command::ServeAlko => alko_mcp::serve().await,
+        Command::ServeSKaupat => s_kaupat_mcp::serve().await,
         Command::Login { port, store_id } => login::run(port, &store_id).await,
     }
 }
