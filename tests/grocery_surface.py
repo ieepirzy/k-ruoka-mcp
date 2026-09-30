@@ -6,36 +6,35 @@ actually exposed by `serve-grocery` without depending on K-Ruoka, S-Kaupat or Al
 reachable from CI.
 """
 
+import itertools
 import json
 import subprocess
 import sys
 
 BINARY = sys.argv[1] if len(sys.argv) > 1 else "./target/debug/k-ruoka-mcp"
 
-EXPECTED = sorted(
-    [
-        # K-Ruoka catalogue + account/cart surface.
-        "search_products",
-        "search_stores",
-        "set_default_store",
-        "get_personal_offers",
-        "get_cart",
-        "add_to_cart",
-        "update_cart_item",
-        "remove_from_cart",
-        "clear_cart",
-        "auth_status",
-        "start_login",
-        "login_status",
-        "cancel_login",
-        # S-Kaupat read-only catalogue.
-        "search_s_kaupat_products",
-        "search_s_kaupat_stores",
-        # Alko read-only catalogue.
-        "search_alko_products",
-        "search_alko_stores",
-    ]
-)
+EXPECTED = sorted([
+    # K-Ruoka catalogue + account/cart surface.
+    "search_products",
+    "search_stores",
+    "set_default_store",
+    "get_personal_offers",
+    "get_cart",
+    "add_to_cart",
+    "update_cart_item",
+    "remove_from_cart",
+    "clear_cart",
+    "auth_status",
+    "start_login",
+    "login_status",
+    "cancel_login",
+    # S-Kaupat read-only catalogue.
+    "search_s_kaupat_products",
+    "search_s_kaupat_stores",
+    # Alko read-only catalogue.
+    "search_alko_products",
+    "search_alko_stores",
+])
 
 p = subprocess.Popen(
     [BINARY, "serve-grocery"],
@@ -45,7 +44,7 @@ p = subprocess.Popen(
     text=True,
     bufsize=1,
 )
-request_id = 0
+request_ids = itertools.count(1)
 
 
 def send(message):
@@ -54,8 +53,7 @@ def send(message):
 
 
 def call(method, params=None):
-    global request_id
-    request_id += 1
+    request_id = next(request_ids)
     message = {"jsonrpc": "2.0", "id": request_id, "method": method}
     if params is not None:
         message["params"] = params
