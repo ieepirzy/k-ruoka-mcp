@@ -50,6 +50,16 @@ enum Command {
         #[arg(long, default_value = login::DEFAULT_PROBE_STORE)]
         store_id: String,
     },
+    /// `login`, then write the session to a file whose content is the value of
+    /// `K_RUOKA_SESSION`, for a headless deployment to load.
+    ExportSession {
+        /// Chrome remote-debugging port, as for `login`.
+        #[arg(long, default_value_t = 9222)]
+        port: u16,
+        /// Store to probe for a signed-in account while waiting.
+        #[arg(long, default_value = login::DEFAULT_PROBE_STORE)]
+        store_id: String,
+    },
 }
 
 #[tokio::main]
@@ -64,5 +74,6 @@ async fn main() -> Result<()> {
         Command::ServeAlko => alko_mcp::serve().await,
         Command::ServeSKaupat => s_kaupat_mcp::serve().await,
         Command::Login { port, store_id } => login::run(port, &store_id).await,
+        Command::ExportSession { port, store_id } => login::export(port, &store_id).await,
     }
 }
