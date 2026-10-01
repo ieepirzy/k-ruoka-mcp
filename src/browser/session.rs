@@ -570,6 +570,9 @@ impl Session {
             )
         })?;
         let handler = tokio::spawn(async move { while handler.next().await.is_some() {} });
+        if self.mode == LaunchMode::Headless {
+            apply_pending_seed(&browser, &self.profile).await;
+        }
         let page = browser.new_page("about:blank").await?;
         let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
         // Same reasoning as the retry lines: a relaunch that silently no-ops is
@@ -598,6 +601,17 @@ impl Session {
         let guard = self.live.lock().await;
         let live = guard.as_ref().ok_or_else(closed_underneath_us)?;
         Ok((live.page.clone(), live.generation))
+    }
+
+    /// Every cookie in the browser, for `export-session`.
+    pub async fn all_cookies(
+        &self,
+    ) -> Result<Vec<chromiumoxide::cdp::browser_protocol::network::Cookie>> {
+        let _activity = self.begin_browser_activity().await;
+        self.ensure_live().await?;
+        let guard = self.live.lock().await;
+        let browser = &guard.as_ref().ok_or_else(closed_underneath_us)?.browser;
+        Ok(browser.get_cookies().await?)
     }
 
     /// Open an additional tab that this `Session` does not manage.
@@ -1055,6 +1069,28 @@ fn clearance_step(
         return ClearanceStep::TimedOut;
     }
     ClearanceStep::KeepWaiting
+}
+
+/// Load `K_RUOKA_SESSION` into a freshly launched browser, once per distinct seed.
+///
+/// Never fatal: a bad or stale seed must not stop the server, which can still serve the
+/// catalogue and report `auth_status` honestly. The values are never printed.
+async fn apply_pending_seed(browser: &Browser, profile: &Path) {
+    let Some(raw) = super::seed::pending(profile) else {
+        return;
+    };
+    let outcome = async {
+        let cookies = super::seed::decode(&raw)?;
+        let count = cookies.len();
+        browser.set_cookies(cookies).await?;
+        super::seed::mark_applied(profile, &raw)?;
+        anyhow::Ok(count)
+    }
+    .await;
+    match outcome {
+        Ok(count) => eprintln!("k-ruoka-mcp: loaded {count} cookies from K_RUOKA_SESSION"),
+        Err(e) => eprintln!("k-ruoka-mcp: K_RUOKA_SESSION not applied: {e:#}"),
+    }
 }
 
 /// Navigate to the shop and wait for Cloudflare, polling rather than sleeping a
@@ -1941,5 +1977,61 @@ mod tests {
         for (url, expected) in cases {
             assert_eq!(on_shop_origin(url), *expected, "url: {url}");
         }
+    }
+
+    /// The seed path against a real Chrome, offline: `about:blank`, never k-ruoka.fi.
+    /// Ignored because CI runners have no Chrome; run with
+    /// `cargo test -- --ignored seed_cookies_reach_a_real_chrome`.
+    #[tokio::test]
+    #[ignore = "needs a local Chrome"]
+    async fn seed_cookies_reach_a_real_chrome() {
+        use chromiumoxide::cdp::browser_protocol::network::Cookie;
+        let dir = std::env::temp_dir().join(format!("k-ruoka-seed-chrome-{}", std::process::id()));
+        let profile = dir.join("profile");
+        std::fs::create_dir_all(&profile).unwrap();
+        let fake: Vec<Cookie> = vec![
+            serde_json::from_value(serde_json::json!({
+                "name": "seeded", "value": "yes", "domain": ".k-ruoka.fi", "path": "/",
+                "expires": 1_900_000_000.0, "size": 9, "httpOnly": true, "secure": true,
+                "session": false, "sameSite": "Lax", "priority": "Medium",
+                "sourceScheme": "Secure", "sourcePort": 443,
+            }))
+            .unwrap(),
+        ];
+        // SAFETY: only this test sets the variable, and it is ignored by default.
+        unsafe {
+            std::env::set_var(
+                super::super::seed::SEED_ENV,
+                super::super::seed::encode(&fake).unwrap(),
+            )
+        };
+
+        let config = BrowserConfig::builder()
+            .chrome_executable(chrome_path())
+            .user_data_dir(&profile)
+            .no_sandbox()
+            .new_headless_mode()
+            .build()
+            .unwrap();
+        let (mut browser, mut handler) = Browser::launch(config).await.unwrap();
+        let task = tokio::spawn(async move { while handler.next().await.is_some() {} });
+        apply_pending_seed(&browser, &profile).await;
+        let cookies = browser.get_cookies().await.unwrap();
+        browser.close().await.ok();
+        task.abort();
+        unsafe { std::env::remove_var(super::super::seed::SEED_ENV) };
+
+        let seeded = cookies
+            .iter()
+            .find(|c| c.name == "seeded")
+            .expect("seed not loaded");
+        assert_eq!(seeded.value, "yes");
+        assert_eq!(seeded.domain, ".k-ruoka.fi");
+        assert!(seeded.http_only && seeded.secure);
+        assert!(
+            super::super::seed::pending(&profile).is_none(),
+            "marker not written"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

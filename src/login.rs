@@ -31,6 +31,16 @@ const USER_TAB_TITLE: &str = "Tuotteet | K-Ruoka Verkkokauppa";
 const UNDER_XVFB_ENV: &str = "K_RUOKA_UNDER_XVFB";
 
 pub async fn run(debug_port: u16, store_id: &str) -> Result<()> {
+    sign_in(debug_port, store_id, false).await
+}
+
+/// `login`, then write the signed-in cookies to a file for `K_RUOKA_SESSION`
+/// (`browser::seed`). Already signed in, it exports at once.
+pub async fn export(debug_port: u16, store_id: &str) -> Result<()> {
+    sign_in(debug_port, store_id, true).await
+}
+
+async fn sign_in(debug_port: u16, store_id: &str, export: bool) -> Result<()> {
     let display = Display::detect();
     reexec_under_xvfb_if_headless()?;
     ensure_port_free(debug_port)?;
@@ -95,12 +105,33 @@ pub async fn run(debug_port: u16, store_id: &str) -> Result<()> {
         result = Err(anyhow::anyhow!("cancelled before signing in"));
     }
 
+    // Read while the browser is still up; the close below is what flushes the
+    // profile, but the live cookie jar is already complete.
+    let mut exported = None;
+    if export && result.is_ok() {
+        result = async {
+            let cookies = session.all_cookies().await?;
+            let path = crate::browser::seed::export_path(&profile);
+            crate::browser::seed::write_private(&path, &crate::browser::seed::encode(&cookies)?)?;
+            exported = Some((path, cookies.len()));
+            anyhow::Ok(())
+        }
+        .await;
+    }
+
     // Graceful close, so Chrome flushes cookies into the profile. Without this
     // the login appears to work and then silently isn't there next time.
     session.close().await.ok();
 
     match result {
         Ok(()) => {
+            if let Some((path, count)) = exported {
+                println!(
+                    "Exported {count} cookies to {}. Its content is the value of \
+                     K_RUOKA_SESSION; treat the file like a password.",
+                    path.display()
+                );
+            }
             println!("Session saved to {}.", profile.display());
             println!("`k-ruoka-mcp serve` will now use it. Re-run `login` if it expires.");
             Ok(())

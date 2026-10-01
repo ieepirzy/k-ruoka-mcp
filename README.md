@@ -196,6 +196,24 @@ The login is saved in `~/.local/share/k-ruoka-mcp/profile` (override with
 `K_RUOKA_PROFILE`). **Treat that directory like a password.** Run `login` again if the
 session expires.
 
+### Signing a server in from your desktop
+
+A headless server has no screen to sign in on. Sign in on a machine that has one and
+hand the session over as an environment variable:
+
+```sh
+uvx k-ruoka-mcp export-session    # the same browser as `login`; exits once signed in
+```
+
+It writes `session_export` next to the profile (`~/.local/share/k-ruoka-mcp/` on
+Linux). The file's content is the value of `K_RUOKA_SESSION` for the server. On its next
+browser launch the server loads those cookies into its own profile, once; from then on
+its own Chrome keeps the session renewed, and a restart does not roll it back to the
+seed. When K-Ruoka eventually ends the session (`auth_status` says so), export again and
+replace the variable: a different value is applied on the next launch.
+
+The value is your login. Keep it with your other secrets.
+
 ### 2. Register the server
 
 ```json
